@@ -1,0 +1,53 @@
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: pbsm-config
+data:
+  config.toml: |
+    [graph]
+    maxNodes = 1000
+    maxEdges = 5000
+    defaultConfidence = 0.8
+
+    [intention_stack]
+    max_stack_depth = 30
+    max_stack_capacity = 800
+    max_revert_depth = 10
+    root_visibility_threshold = 0.7
+    default_step_timeout = 60000
+    default_max_retries = 5
+    max_checkpoints_per_layer = 30
+
+    [intention_stack.drift_threshold]
+    warning = 0.3
+    moderate = 0.5
+    severe = 0.7
+    critical = 0.9
+
+    [metacognitive.attention]
+    default_mode = "normal"
+    max_attention_level = 1.0
+    min_attention_level = 0.1
+
+    [metacognitive.attention.weight_configuration]
+    recency_weight = 0.3
+    frequency_weight = 0.3
+    importance_weight = 0.2
+    prediction_weight = 0.2
+
+    [metacognitive.value_evaluation]
+    evaluation_interval_seconds = 300
+    value_threshold = 0.3
+
+    [metacognitive.forgetting]
+    forgetting_threshold = 0.2
+    retention_period_hours = 168
+
+    [metacognitive.anomaly_detection]
+    check_interval_seconds = 60
+    anomaly_threshold = 0.7
+
+    [memory]
+    storage_path = "/pbsm/data/memory"
+    max_storage_size_mb = 512
+    compression_type = "NONE"

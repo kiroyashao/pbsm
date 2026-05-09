@@ -1,0 +1,43 @@
+[package]
+name = "pbsm-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Predictive Belief State Machine - Core Library"
+repository = "https://github.com/pbsm/pbsm"
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+async-trait.workspace = true
+sha2.workspace = true
+rusqlite.workspace = true
+sled.workspace = true
+lz4_flex.workspace = true
+zstd.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+parking_lot.workspace = true
+tempfile.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "pbsm_benchmarks"
+harness = false
+
+[features]
+default = []

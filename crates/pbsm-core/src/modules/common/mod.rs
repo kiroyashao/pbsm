@@ -1,0 +1,344 @@
+//! 公共接口定义
+//!
+//! 本模块定义了预测引擎与外部系统交互的接口，包括：
+//! - 信念图读写接口
+//! - 事件发布接口
+//! - 相关数据结构
+//!
+//! # 接口设计
+//!
+//! - BeliefGraphReader/BeliefGraphWriter：信念图读写接口
+//! - EventPublisher：事件发布接口
+//! - Null*：空实现，用于测试和默认配置
+
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use serde_json::Value;
+use uuid::Uuid;
+
+use crate::types::prediction::ActionType;
+use crate::types::residual::{MatchLevel, Residual};
+
+/// 信念图读取接口
+///
+/// # 设计说明
+///
+/// 该接口定义了预测引擎读取信念图所需的全部操作。
+/// 实现者需要提供线程安全的信念查询能力。
+#[async_trait]
+pub trait BeliefGraphReader: Send + Sync {
+    async fn query_belief_by_id(
+        &self,
+        node_id: &str,
+    ) -> Result<Option<BeliefNode>, BeliefGraphError>;
+    async fn query_beliefs(
+        &self,
+        query_spec: BeliefQuerySpec,
+    ) -> Result<Vec<BeliefNode>, BeliefGraphError>;
+    async fn get_belief_state(
+        &self,
+        belief_ids: &[String],
+    ) -> Result<BeliefState, BeliefGraphError>;
+    async fn get_outgoing_edges(
+        &self,
+        node_id: &str,
+    ) -> Result<Vec<RelationEdge>, BeliefGraphError>;
+}
+
+/// 信念节点结构体
+///
+/// # 字段说明
+///
+/// - node_id：节点唯一标识符
+/// - node_type：节点类型（如 Entity、Event、Action 等）
+/// - attributes：节点属性（JSON格式）
+/// - confidence：信念置信度 [0.0, 1.0]
+/// - created_at/updated_at：时间戳
+#[derive(Debug, Clone)]
+pub struct BeliefNode {
+    pub node_id: String,
+    pub node_type: String,
+    pub attributes: Value,
+    pub confidence: f64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 关系边结构体
+///
+/// # 字段说明
+///
+/// - edge_id：边唯一标识符
+/// - source_node：源节点ID
+/// - target_node：目标节点ID
+/// - edge_type：边类型（如因果、包含、关联等）
+/// - confidence：边的置信度
+#[derive(Debug, Clone)]
+pub struct RelationEdge {
+    pub edge_id: Uuid,
+    pub source_node: String,
+    pub target_node: String,
+    pub edge_type: String,
+    pub confidence: f64,
+}
+
+/// 信念状态结构体
+///
+/// # 用途
+///
+/// 用于批量获取多个信念节点的完整状态快照
+#[derive(Debug, Clone)]
+pub struct BeliefState {
+    pub nodes: Vec<BeliefNode>,
+    pub edges: Vec<RelationEdge>,
+    pub hash: String,
+}
+
+/// 信念查询规格结构体
+///
+/// # 字段说明
+///
+/// - node_type：按节点类型过滤
+/// - attributes：需要返回的属性列表
+/// - confidence_threshold：最低置信度阈值
+#[derive(Debug, Clone)]
+pub struct BeliefQuerySpec {
+    pub node_type: Option<String>,
+    pub attributes: Option<Vec<String>>,
+    pub confidence_threshold: Option<f64>,
+}
+
+/// 信念图错误类型
+#[derive(Debug, Clone)]
+pub enum BeliefGraphError {
+    NodeNotFound(String),
+    QueryFailed(String),
+    SerializationError(String),
+}
+
+impl std::fmt::Display for BeliefGraphError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BeliefGraphError::NodeNotFound(id) => write!(f, "Node not found: {}", id),
+            BeliefGraphError::QueryFailed(msg) => write!(f, "Query failed: {}", msg),
+            BeliefGraphError::SerializationError(msg) => write!(f, "Serialization error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for BeliefGraphError {}
+
+/// 信念图写入接口
+///
+/// # 设计说明
+///
+/// 该接口定义了更新信念图所需的操作。
+/// 主要用于预测验证后对信念的修正。
+#[async_trait]
+pub trait BeliefGraphWriter: Send + Sync {
+    async fn update_belief_confidence(
+        &self,
+        node_id: &str,
+        attribute: &str,
+        new_confidence: f64,
+    ) -> Result<(), BeliefGraphError>;
+
+    async fn mark_belief_for_revision(
+        &self,
+        belief_id: &str,
+        reason: &str,
+    ) -> Result<(), BeliefGraphError>;
+}
+
+/// 事件发布接口
+///
+/// # 设计说明
+///
+/// 预测引擎通过该接口发布各类事件，供外部系统订阅处理。
+pub trait EventPublisher: Send + Sync {
+    fn publish_event(&self, event: PredictionEvent) -> Result<(), EventPublishError>;
+}
+
+/// 预测事件枚举
+///
+/// # 事件类型
+///
+/// - PredictionCreated：预测创建事件
+/// - PredictionVerified：预测验证通过事件
+/// - PredictionFalsified：预测被证伪事件
+/// - ResidualComputed：残差计算完成事件
+/// - *ResidualDetected：各严重程度残差检测事件
+#[derive(Debug, Clone)]
+pub enum PredictionEvent {
+    PredictionCreated(PredictionCreatedPayload),
+    PredictionVerified(PredictionVerifiedPayload),
+    PredictionFalsified(PredictionFalsifiedPayload),
+    ResidualComputed(ResidualComputedPayload),
+    WarningResidualDetected(WarningResidualPayload),
+    ErrorResidualDetected(ErrorResidualPayload),
+    CriticalResidualDetected(CriticalResidualPayload),
+}
+
+/// 预测创建事件载荷
+#[derive(Debug, Clone)]
+pub struct PredictionCreatedPayload {
+    pub prediction_id: Uuid,
+    pub action_type: ActionType,
+    pub target_node: Option<String>,
+    pub expected_change_count: usize,
+}
+
+/// 预测验证通过事件载荷
+#[derive(Debug, Clone)]
+pub struct PredictionVerifiedPayload {
+    pub prediction_id: Uuid,
+    pub match_level: MatchLevel,
+    pub confidence_delta: f64,
+}
+
+/// 预测被证伪事件载荷
+#[derive(Debug, Clone)]
+pub struct PredictionFalsifiedPayload {
+    pub prediction_id: Uuid,
+    pub match_level: MatchLevel,
+    pub severity: String,
+    pub overall_degree: f64,
+    pub affected_beliefs: Vec<String>,
+}
+
+/// 残差计算完成事件载荷
+#[derive(Debug, Clone)]
+pub struct ResidualComputedPayload {
+    pub prediction_id: Uuid,
+    pub residual: Residual,
+}
+
+/// Warning级别残差检测事件载荷
+#[derive(Debug, Clone)]
+pub struct WarningResidualPayload {
+    pub prediction_id: Uuid,
+    pub residual: Residual,
+    pub affected_beliefs: Vec<String>,
+}
+
+/// Error级别残差检测事件载荷
+#[derive(Debug, Clone)]
+pub struct ErrorResidualPayload {
+    pub prediction_id: Uuid,
+    pub residual: Residual,
+    pub affected_beliefs: Vec<String>,
+    pub suggested_action: String,
+}
+
+/// Critical级别残差检测事件载荷
+#[derive(Debug, Clone)]
+pub struct CriticalResidualPayload {
+    pub prediction_id: Uuid,
+    pub residual: Residual,
+    pub affected_beliefs: Vec<String>,
+    pub urgency: Urgency,
+}
+
+/// 紧急程度枚举
+#[derive(Debug, Clone, Copy)]
+pub enum Urgency {
+    Immediate,
+    High,
+    Normal,
+}
+
+/// 事件发布错误类型
+#[derive(Debug, Clone)]
+pub enum EventPublishError {
+    PublishFailed(String),
+    EventTypeUnknown,
+}
+
+impl std::fmt::Display for EventPublishError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EventPublishError::PublishFailed(msg) => write!(f, "Publish failed: {}", msg),
+            EventPublishError::EventTypeUnknown => write!(f, "Unknown event type"),
+        }
+    }
+}
+
+impl std::error::Error for EventPublishError {}
+
+/// 信念图读取接口的空实现
+///
+/// # 用途
+///
+/// 用于测试或当不需要信念图功能时的默认实现
+pub struct NullBeliefGraphReader;
+
+#[async_trait]
+impl BeliefGraphReader for NullBeliefGraphReader {
+    async fn query_belief_by_id(
+        &self,
+        _node_id: &str,
+    ) -> Result<Option<BeliefNode>, BeliefGraphError> {
+        Ok(None)
+    }
+
+    async fn query_beliefs(
+        &self,
+        _query_spec: BeliefQuerySpec,
+    ) -> Result<Vec<BeliefNode>, BeliefGraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_belief_state(
+        &self,
+        _belief_ids: &[String],
+    ) -> Result<BeliefState, BeliefGraphError> {
+        Ok(BeliefState {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            hash: String::new(),
+        })
+    }
+
+    async fn get_outgoing_edges(
+        &self,
+        _node_id: &str,
+    ) -> Result<Vec<RelationEdge>, BeliefGraphError> {
+        Ok(Vec::new())
+    }
+}
+
+/// 信念图写入接口的空实现
+pub struct NullBeliefGraphWriter;
+
+#[async_trait]
+impl BeliefGraphWriter for NullBeliefGraphWriter {
+    async fn update_belief_confidence(
+        &self,
+        _node_id: &str,
+        _attribute: &str,
+        _new_confidence: f64,
+    ) -> Result<(), BeliefGraphError> {
+        Ok(())
+    }
+
+    async fn mark_belief_for_revision(
+        &self,
+        _belief_id: &str,
+        _reason: &str,
+    ) -> Result<(), BeliefGraphError> {
+        Ok(())
+    }
+}
+
+/// 事件发布接口的空实现
+///
+/// # 用途
+///
+/// 静默丢弃所有事件，用于不需要事件通知的场景
+pub struct NullEventPublisher;
+
+impl EventPublisher for NullEventPublisher {
+    fn publish_event(&self, _event: PredictionEvent) -> Result<(), EventPublishError> {
+        Ok(())
+    }
+}

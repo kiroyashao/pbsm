@@ -1,0 +1,15 @@
+[package]
+name = "pbsm-python"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+name = "pbsm_python"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+pbsm-core = { path = "../pbsm-core" }
+serde_json = "1.0"
+tokio = { version = "1.36", features = ["full"] }
+uuid = "1"

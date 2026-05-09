@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PBSM 部署拓扑</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #020617; color: #e2e8f0; font-family: 'JetBrains Mono', monospace; min-height: 100vh; }
+.container { max-width: 1100px; margin: 0 auto; padding: 32px; }
+.header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+.header-left { display: flex; align-items: center; gap: 12px; }
+.pulse-dot { width: 10px; height: 10px; border-radius: 50%; background: #fbbf24; animation: pulse 2s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(251,191,36,0.7); } 50% { opacity: 0.7; box-shadow: 0 0 0 8px rgba(251,191,36,0); } }
+h1 { font-size: 20px; font-weight: 700; color: #f1f5f9; }
+.subtitle { font-size: 12px; color: #64748b; margin-top: 2px; }
+.toolbar { position: relative; }
+.toolbar-toggle { background: rgba(30,41,59,0.8); border: 1px solid #334155; color: #94a3b8; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-family: inherit; font-size: 12px; }
+.toolbar-toggle:hover { border-color: #64748b; color: #e2e8f0; }
+.toolbar-actions { display: none; position: absolute; right: 0; top: 36px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 8px; gap: 6px; z-index: 10; }
+.toolbar-actions.show { display: flex; }
+.toolbar-actions button { background: rgba(30,41,59,0.8); border: 1px solid #334155; color: #94a3b8; border-radius: 4px; padding: 6px 14px; cursor: pointer; font-family: inherit; font-size: 11px; white-space: nowrap; }
+.toolbar-actions button:hover { border-color: #64748b; color: #e2e8f0; }
+.diagram-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; padding: 24px; overflow: hidden; }
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 24px; }
+.card { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 16px; }
+.card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.card-dot { width: 8px; height: 8px; border-radius: 50%; }
+.card-dot.amber { background: #fbbf24; }
+.card-dot.rose { background: #fb7185; }
+.card-dot.violet { background: #a78bfa; }
+.card h3 { font-size: 12px; font-weight: 600; color: #f1f5f9; }
+.card ul { list-style: none; font-size: 10px; color: #94a3b8; line-height: 1.8; }
+.footer { text-align: center; margin-top: 24px; font-size: 10px; color: #475569; }
+@media print { .toolbar { display: none !important; } }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+<div class="header">
+  <div class="header-left">
+    <div class="pulse-dot"></div>
+    <div>
+      <h1>PBSM 部署拓扑</h1>
+      <div class="subtitle">Kubernetes 集群部署拓扑</div>
+    </div>
+  </div>
+  <div class="toolbar">
+    <button class="toolbar-toggle" onclick="document.querySelector('.toolbar-actions').classList.toggle('show')">⋯</button>
+    <div class="toolbar-actions">
+      <button onclick="copyAsImage()">📋 Copy</button>
+      <button onclick="downloadPNG()">🖼️ PNG</button>
+      <button onclick="downloadPDF()">📄 PDF</button>
+    </div>
+  </div>
+</div>
+
+<div class="diagram-card">
+<svg viewBox="0 0 1000 600" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+    <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+  </pattern>
+  <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+    <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+  </marker>
+  <marker id="arrowhead-amber" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+    <polygon points="0 0, 10 3.5, 0 7" fill="#fbbf24"/>
+  </marker>
+  <marker id="arrowhead-violet" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+    <polygon points="0 0, 10 3.5, 0 7" fill="#a78bfa"/>
+  </marker>
+</defs>
+
+<rect width="1000" height="600" fill="#020617"/>
+<rect width="1000" height="600" fill="url(#grid)"/>
+
+<!-- Kubernetes Cluster boundary -->
+<rect x="40" y="40" width="920" height="460" rx="12" fill="none" stroke="#fbbf24" stroke-width="2" stroke-dasharray="8,4"/>
+<text x="60" y="68" fill="#fbbf24" font-size="11" font-weight="600" font-family="JetBrains Mono">⎈ Kubernetes 集群</text>
+<text x="60" y="83" fill="#92400e" font-size="8" font-family="JetBrains Mono">Docker Desktop / Docker 内的 Kubernetes</text>
+
+<!-- Namespace boundary -->
+<rect x="70" y="100" width="870" height="380" rx="8" fill="none" stroke="#334155" stroke-width="1" stroke-dasharray="6,3"/>
+<text x="90" y="120" fill="#475569" font-size="9" font-family="JetBrains Mono">命名空间: default</text>
+
+<!-- Pod -->
+<rect x="100" y="140" width="380" height="200" rx="8" fill="rgba(6,78,59,0.15)" stroke="#34d399" stroke-width="1.5"/>
+<text x="120" y="162" fill="#34d399" font-size="10" font-weight="600" font-family="JetBrains Mono">📦 Pod: pbsm-server-xxxxxxxxxx-xxxxx</text>
+
+<!-- Container -->
+<rect x="130" y="178" width="320" height="140" rx="6" fill="#0f172a"/>
+<rect x="130" y="178" width="320" height="140" rx="6" fill="rgba(6,78,59,0.3)" stroke="#34d399" stroke-width="1"/>
+<text x="290" y="200" fill="white" font-size="12" font-weight="700" text-anchor="middle" font-family="JetBrains Mono">pbsm-server</text>
+<text x="290" y="218" fill="#94a3b8" font-size="8" text-anchor="middle" font-family="JetBrains Mono">镜像: pbsm-server:latest</text>
+
+<!-- Container internals -->
+<rect x="150" y="232" width="130" height="36" rx="4" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1"/>
+<text x="215" y="254" fill="#22d3ee" font-size="8" text-anchor="middle" font-family="JetBrains Mono">Python 3.13 运行时</text>
+
+<rect x="300" y="232" width="130" height="36" rx="4" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1"/>
+<text x="365" y="254" fill="#34d399" font-size="8" text-anchor="middle" font-family="JetBrains Mono">pbsm-python (PyO3)</text>
+
+<rect x="150" y="278" width="280" height="28" rx="4" fill="rgba(76,29,149,0.3)" stroke="#a78bfa" stroke-width="1"/>
+<text x="290" y="296" fill="#a78bfa" font-size="8" text-anchor="middle" font-family="JetBrains Mono">pbsm-core (Rust) · :8080 HTTP</text>
+
+<!-- Port -->
+<rect x="460" y="218" width="60" height="24" rx="4" fill="rgba(251,146,60,0.3)" stroke="#fb923c" stroke-width="1"/>
+<text x="490" y="234" fill="#fb923c" font-size="8" text-anchor="middle" font-family="JetBrains Mono">:8080</text>
+
+<!-- Service -->
+<rect x="560" y="160" width="280" height="80" rx="6" fill="#0f172a"/>
+<rect x="560" y="160" width="280" height="80" rx="6" fill="rgba(8,51,68,0.3)" stroke="#22d3ee" stroke-width="1.5"/>
+<text x="700" y="185" fill="white" font-size="11" font-weight="600" text-anchor="middle" font-family="JetBrains Mono">服务: pbsm-server</text>
+<text x="700" y="203" fill="#94a3b8" font-size="9" text-anchor="middle" font-family="JetBrains Mono">ClusterIP · 端口 8080</text>
+<text x="700" y="220" fill="#64748b" font-size="7" text-anchor="middle" font-family="JetBrains Mono">选择器: app=pbsm-server</text>
+
+<!-- PVC -->
+<rect x="560" y="270" width="280" height="70" rx="6" fill="#0f172a"/>
+<rect x="560" y="270" width="280" height="70" rx="6" fill="rgba(76,29,149,0.3)" stroke="#a78bfa" stroke-width="1.5"/>
+<text x="700" y="295" fill="white" font-size="11" font-weight="600" text-anchor="middle" font-family="JetBrains Mono">持久卷: pbsm-data</text>
+<text x="700" y="313" fill="#94a3b8" font-size="9" text-anchor="middle" font-family="JetBrains Mono">读写一次 · 1Gi</text>
+<text x="700" y="328" fill="#64748b" font-size="7" text-anchor="middle" font-family="JetBrains Mono">/pbsm/data · 持久化数据目录</text>
+
+<!-- ConfigMap -->
+<rect x="560" y="370" width="280" height="80" rx="6" fill="#0f172a"/>
+<rect x="560" y="370" width="280" height="80" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="700" y="395" fill="white" font-size="11" font-weight="600" text-anchor="middle" font-family="JetBrains Mono">配置映射: pbsm-config</text>
+<text x="700" y="413" fill="#94a3b8" font-size="9" text-anchor="middle" font-family="JetBrains Mono">config.toml · 系统配置</text>
+<text x="700" y="430" fill="#64748b" font-size="7" text-anchor="middle" font-family="JetBrains Mono">/pbsm/config · 只读</text>
+
+<!-- Arrows -->
+<line x1="460" y1="230" x2="560" y2="200" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+<text x="510" y="208" fill="#64748b" font-size="7" font-family="JetBrains Mono" text-anchor="middle">HTTP</text>
+
+<line x1="480" y1="280" x2="560" y2="300" stroke="#a78bfa" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrowhead-violet)"/>
+<text x="520" y="283" fill="#64748b" font-size="7" font-family="JetBrains Mono" text-anchor="middle">挂载</text>
+
+<line x1="480" y1="310" x2="560" y2="400" stroke="#fbbf24" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrowhead-amber)"/>
+<text x="520" y="365" fill="#64748b" font-size="7" font-family="JetBrains Mono" text-anchor="middle">挂载</text>
+
+<!-- Probes -->
+<rect x="100" y="360" width="160" height="50" rx="4" fill="rgba(136,19,55,0.2)" stroke="#fb7185" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="180" y="380" fill="#fb7185" font-size="8" font-weight="600" text-anchor="middle" font-family="JetBrains Mono">健康探针</text>
+<text x="180" y="396" fill="#94a3b8" font-size="7" text-anchor="middle" font-family="JetBrains Mono">存活 / 就绪 :8080/health</text>
+
+<!-- Resources -->
+<rect x="100" y="425" width="160" height="45" rx="4" fill="rgba(30,41,59,0.5)" stroke="#475569" stroke-width="1"/>
+<text x="180" y="443" fill="#94a3b8" font-size="8" font-weight="600" text-anchor="middle" font-family="JetBrains Mono">资源</text>
+<text x="180" y="458" fill="#64748b" font-size="7" text-anchor="middle" font-family="JetBrains Mono">128-512Mi · 100-500m CPU</text>
+
+<!-- External client -->
+<rect x="100" y="530" width="200" height="40" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1"/>
+<text x="200" y="554" fill="#94a3b8" font-size="10" font-weight="600" text-anchor="middle" font-family="JetBrains Mono">外部客户端</text>
+
+<line x1="200" y1="530" x2="200" y2="500" stroke="#64748b" stroke-width="1" marker-end="url(#arrowhead)"/>
+<text x="220" y="520" fill="#64748b" font-size="7" font-family="JetBrains Mono">:8080</text>
+
+<!-- Legend -->
+<rect x="380" y="525" width="580" height="50" rx="6" fill="rgba(15,23,42,0.8)" stroke="#1e293b" stroke-width="1"/>
+<text x="400" y="543" fill="#64748b" font-size="8" font-family="JetBrains Mono">图例:</text>
+<rect x="400" y="553" width="12" height="12" rx="2" fill="rgba(6,78,59,0.3)" stroke="#34d399" stroke-width="1"/>
+<text x="418" y="564" fill="#94a3b8" font-size="8" font-family="JetBrains Mono">Pod/容器</text>
+<rect x="520" y="553" width="12" height="12" rx="2" fill="rgba(8,51,68,0.3)" stroke="#22d3ee" stroke-width="1"/>
+<text x="538" y="564" fill="#94a3b8" font-size="8" font-family="JetBrains Mono">服务</text>
+<rect x="610" y="553" width="12" height="12" rx="2" fill="rgba(76,29,149,0.3)" stroke="#a78bfa" stroke-width="1"/>
+<text x="628" y="564" fill="#94a3b8" font-size="8" font-family="JetBrains Mono">PVC</text>
+<rect x="680" y="553" width="12" height="12" rx="2" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1"/>
+<text x="698" y="564" fill="#94a3b8" font-size="8" font-family="JetBrains Mono">ConfigMap</text>
+<rect x="790" y="553" width="12" height="12" rx="2" fill="rgba(136,19,55,0.2)" stroke="#fb7185" stroke-width="1"/>
+<text x="808" y="564" fill="#94a3b8" font-size="8" font-family="JetBrains Mono">探针</text>
+</svg>
+</div>
+
+<div class="cards">
+  <div class="card">
+    <div class="card-header">
+      <div class="card-dot amber"></div>
+      <h3>Kubernetes 集群</h3>
+    </div>
+    <ul>
+      <li>• Docker Desktop 本地集群</li>
+      <li>• 单节点部署，开发/测试环境</li>
+      <li>• 加载镜像</li>
+    </ul>
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-dot rose"></div>
+      <h3>健康与资源</h3>
+    </div>
+    <ul>
+      <li>• 存活/就绪双探针</li>
+      <li>• /health 端点自动检测</li>
+      <li>• 128Mi-512Mi 内存限制</li>
+    </ul>
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-dot violet"></div>
+      <h3>持久化</h3>
+    </div>
+    <ul>
+      <li>• PVC 1Gi 持久卷</li>
+      <li>• ConfigMap 只读挂载</li>
+      <li>• 数据目录 /pbsm/data</li>
+    </ul>
+  </div>
+</div>
+
+<div class="footer">PBSM v1.0.0 · Kubernetes 部署 · Kubernetes + Docker Desktop</div>
+</div>
+
+<script>
+function copyAsImage(){const el=document.getElementById('report-container');const r=el.getBoundingClientRect();html2canvas(document.body,{x:r.x-32,y:r.y-32,width:r.width+64,height:r.height+64,scale:2,ignoreElements:e=>e.classList&&e.classList.contains('toolbar')}).then(c=>{c.toBlob(b=>navigator.clipboard.write([new ClipboardItem({'image/png':b})]).then(()=>document.querySelector('.toolbar-actions').classList.remove('show')))})}
+function downloadPNG(){const el=document.getElementById('report-container');const r=el.getBoundingClientRect();html2canvas(document.body,{x:r.x-32,y:r.y-32,width:r.width+64,height:r.height+64,scale:2,ignoreElements:e=>e.classList&&e.classList.contains('toolbar')}).then(c=>{const a=document.createElement('a');a.download='pbsm-deployment-zh.png';a.href=c.toDataURL('image/png');a.click();document.querySelector('.toolbar-actions').classList.remove('show')})}
+function downloadPDF(){const el=document.getElementById('report-container');const r=el.getBoundingClientRect();html2canvas(document.body,{x:r.x-32,y:r.y-32,width:r.width+64,height:r.height+64,scale:2,ignoreElements:e=>e.classList&&e.classList.contains('toolbar')}).then(c=>{const{jsPDF}=window.jspdf;const p=new jsPDF({orientation:'landscape',unit:'px',format:[c.width,c.height]});p.addImage(c.toDataURL('image/png'),'PNG',0,0,c.width,c.height);p.save('pbsm-deployment-zh.pdf');document.querySelector('.toolbar-actions').classList.remove('show')})}
+</script>
+</body>
+</html>

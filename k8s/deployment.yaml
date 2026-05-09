@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pbsm-server
+  labels:
+    app: pbsm-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pbsm-server
+  template:
+    metadata:
+      labels:
+        app: pbsm-server
+    spec:
+      containers:
+        - name: pbsm-server
+          image: pbsm-server:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: PBSM_DATA_DIR
+              value: "/pbsm/data"
+            - name: PBSM_CONFIG_PATH
+              value: "/pbsm/config/config.toml"
+            - name: RUST_LOG
+              value: "info"
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          volumeMounts:
+            - name: data
+              mountPath: /pbsm/data
+            - name: config
+              mountPath: /pbsm/config
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pbsm-data
+        - name: config
+          configMap:
+            name: pbsm-config
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pbsm-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pbsm-server
+spec:
+  selector:
+    app: pbsm-server
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+  type: ClusterIP
