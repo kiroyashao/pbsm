@@ -7,7 +7,8 @@
 
 > A cognitive architecture that predicts before it acts, continuously refining its beliefs through verification and feedback loops.
 
----
+***
+
 - [中文文档](README_zh.md)
 
 ## Why PBSM?
@@ -17,13 +18,9 @@
 Current AI Agent systems universally adopt an **"Act-then-Observe"** paradigm: the Agent calls a tool, gets a result, then decides the next step. This pattern has fundamental flaws:
 
 1. **Cannot anticipate consequences**: The Agent has no expectation of results before executing an action, and cannot detect potential problems in advance. For example, a code-modification Agent might execute `rm -rf` without predicting that files will be permanently deleted.
-
 2. **Lack of self-awareness**: The system doesn't know what it "doesn't know." When excessive focus, drift, or oscillation occurs, the system cannot self-detect and self-correct.
-
 3. **Unstructured beliefs**: Traditional Agents store information in a flat context window, lacking structured knowledge representation. There are no causal, temporal, or hierarchical relationships between pieces of information, limiting reasoning capability.
-
 4. **Unreliable memory**: Without a layered memory mechanism (short-term / long-term / experiential), Agents cannot learn from past successes and failures, starting from scratch with every interaction.
-
 5. **Fragile task planning**: Simple task queues cannot handle hierarchical goals, intent drift, and checkpoint recovery. Once a step fails, the entire task chain collapses.
 
 PBSM's core insight comes from cognitive science: **humans predict outcomes before acting, and when predictions don't match reality, they revise their beliefs and adjust their behavior**. PBSM formalizes this cognitive loop into a computable architecture.
@@ -32,15 +29,15 @@ PBSM's core insight comes from cognitive science: **humans predict outcomes befo
 
 PBSM introduces a **"Predict → Verify → Correct"** closed-loop paradigm:
 
-| Traditional Agent | PBSM Agent |
-|-------------------|------------|
-| Execute → Observe → React | Predict → Execute → Verify → Correct |
-| No expectations, remediate after the fact | Has expectations, prevents problems proactively |
-| Flat context window | Structured Belief Graph |
-| No self-monitoring | Metacognition (attention / forgetting / anomaly detection) |
-| Simple task queue | Hierarchical Intention Stack + checkpoint recovery |
-| No long-term memory | Three-layer memory (raw logs / snapshots / experience) |
-| Single Agent | Multi-Agent communication + conflict negotiation |
+| Traditional Agent                         | PBSM Agent                                                 |
+| ----------------------------------------- | ---------------------------------------------------------- |
+| Execute → Observe → React                 | Predict → Execute → Verify → Correct                       |
+| No expectations, remediate after the fact | Has expectations, prevents problems proactively            |
+| Flat context window                       | Structured Belief Graph                                    |
+| No self-monitoring                        | Metacognition (attention / forgetting / anomaly detection) |
+| Simple task queue                         | Hierarchical Intention Stack + checkpoint recovery         |
+| No long-term memory                       | Three-layer memory (raw logs / snapshots / experience)     |
+| Single Agent                              | Multi-Agent communication + conflict negotiation           |
 
 **Core difference**: A PBSM Agent generates a structured Prediction before every action, describing "what I expect to happen." After execution, the Verifier computes the residual between prediction and reality, and the residual drives belief updates and behavioral adjustments. This gives the Agent:
 
@@ -48,8 +45,9 @@ PBSM introduces a **"Predict → Verify → Correct"** closed-loop paradigm:
 - **Explainability**: Every decision has a prediction as its basis — "why this action" is traceable
 - **Adaptability**: Residual feedback drives continuous learning; beliefs are refined with experience
 - **Robustness**: Metacognition automatically detects anomalous patterns (oscillation, drift, excessive focus) and triggers interventions
+- **Nativeness**: PBSM does not rely on any LLM or Agent. You can entirely treat it as a standalone self-evolving system
 
----
+***
 
 ## Design Philosophy
 
@@ -58,21 +56,19 @@ PBSM introduces a **"Predict → Verify → Correct"** closed-loop paradigm:
 PBSM's core paradigm is inspired by the following theories:
 
 - **Predictive Coding**: Neuroscience theory posits that the brain doesn't passively receive information but continuously predicts sensory input, using prediction error to drive learning. PBSM's residual computation is an engineering implementation of this theory.
-
 - **Active Inference**: Friston's Free Energy Principle states that intelligent systems act by minimizing prediction error. PBSM's closed-loop design (Predict → Verify → Correct) directly corresponds to this principle.
-
 - **Belief Revision**: Belief revision theory in cognitive science provides a formal framework — when new evidence conflicts with old beliefs, beliefs should be revised with minimal cost. PBSM's confidence adjustment (verification pass +0.05, verification fail -0.15) embodies an asymmetric revision strategy.
 
 ### Why Belief Graph?
 
-| Feature | Knowledge Graph | Belief Graph |
-|---------|----------------|--------------|
-| Core semantics | "X is true" | "X has confidence 0.85" |
-| Uncertainty | Usually not handled | First-class citizen (confidence field) |
-| Temporality | Mostly static | Dynamic (create/update timestamps + validity window) |
-| Forgettability | No such concept | Built-in forgetting mechanism (low-value beliefs auto-evicted) |
-| Snapshot & rollback | Not supported | Supported (Snapshot + Checkpoint) |
-| Prediction association | None | Edges can be associated with predictions; confidence updates after verification |
+| Feature                | Knowledge Graph     | Belief Graph                                                                    |
+| ---------------------- | ------------------- | ------------------------------------------------------------------------------- |
+| Core semantics         | "X is true"         | "X has confidence 0.85"                                                         |
+| Uncertainty            | Usually not handled | First-class citizen (confidence field)                                          |
+| Temporality            | Mostly static       | Dynamic (create/update timestamps + validity window)                            |
+| Forgettability         | No such concept     | Built-in forgetting mechanism (low-value beliefs auto-evicted)                  |
+| Snapshot & rollback    | Not supported       | Supported (Snapshot + Checkpoint)                                               |
+| Prediction association | None                | Edges can be associated with predictions; confidence updates after verification |
 
 The core advantage of a Belief Graph: **every node and edge carries a confidence score**, enabling the system to quantify "how certain" rather than merely "what is known." When a prediction is verified or falsified, the confidence of related beliefs is automatically adjusted — something traditional knowledge graphs cannot do.
 
@@ -81,9 +77,7 @@ The core advantage of a Belief Graph: **every node and edge carries a confidence
 Metacognition is the key design that distinguishes PBSM from other Agent frameworks. An Agent without metacognition is like a system that cannot realize it's making mistakes:
 
 - **Attention control**: Simulates the limited nature of human attention. The system can switch between `LowVigilance`, `ModerateFocus`, and `HighReconnaissance` modes, avoiding over-investment in a single target or excessively scattered attention.
-
 - **Forgetting mechanism**: Not all information is worth retaining forever. The ForgettingExecutor identifies low-value beliefs based on Value Evaluation, supporting deferred forgetting and protected beliefs to prevent critical information from being accidentally deleted.
-
 - **Anomaly detection**: Automatically detects four anomalous patterns — Oscillation, Locked, Excessive Focus, and Drift — and triggers Interventions. This gives the system the ability to "know when something is wrong with itself."
 
 ### Why Intention Stack?
@@ -97,15 +91,15 @@ The Intention Stack design is inspired by the BDI (Belief-Desire-Intention) arch
 
 ### Why Rust?
 
-| Consideration | Rust's Advantage |
-|---------------|------------------|
-| Performance | Zero-cost abstractions; belief graph queries and prediction generation complete in microseconds |
-| Concurrency safety | Compile-time guarantee of data-race freedom; `Arc<RwLock>` pattern naturally suits read-heavy belief graphs |
-| Reliability | No null pointers, no data races, no undefined behavior; 545+ tests with zero unsafe code |
-| Python interop | PyO3 provides zero-copy Rust-Python bridging, balancing performance and usability |
-| Embedded deployment | Compiles to a single binary, suitable for Docker/K8s deployment with no runtime dependencies |
+| Consideration       | Rust's Advantage                                                                                            |
+| ------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Performance         | Zero-cost abstractions; belief graph queries and prediction generation complete in microseconds             |
+| Concurrency safety  | Compile-time guarantee of data-race freedom; `Arc<RwLock>` pattern naturally suits read-heavy belief graphs |
+| Reliability         | No null pointers, no data races, no undefined behavior; 545+ tests with zero unsafe code                    |
+| Python interop      | PyO3 provides zero-copy Rust-Python bridging, balancing performance and usability                           |
+| Embedded deployment | Compiles to a single binary, suitable for Docker/K8s deployment with no runtime dependencies                |
 
----
+***
 
 ## Overview
 
@@ -118,17 +112,17 @@ PBSM (Predictive Belief State Machine) is a cognitive architecture framework bas
 
 ### Seven Core Modules
 
-| Module | Name | Responsibility |
-|--------|------|----------------|
-| M1 | BeliefGraph | Belief Graph — knowledge representation, graph structure management, snapshot & rollback |
-| M2 | PredictionEngine | Prediction Engine — generate and verify predictions based on the Belief Graph |
-| M3 | ToolAdapter | Tool Adapter — external tool integration, assertion submission |
-| M4 | Metacognition | Metacognition — attention modes, forgetting mechanism, anomaly detection |
-| M5 | IntentionStack | Intention Stack — task planning, hierarchical management, checkpoint recovery |
-| M6 | Communication | Communication — cross-Agent coordination, security filtering |
-| M7 | EventBus | Event Bus — system event dispatching, publish/subscribe, history management |
+| Module | Name             | Responsibility                                                                           |
+| ------ | ---------------- | ---------------------------------------------------------------------------------------- |
+| M1     | BeliefGraph      | Belief Graph — knowledge representation, graph structure management, snapshot & rollback |
+| M2     | PredictionEngine | Prediction Engine — generate and verify predictions based on the Belief Graph            |
+| M3     | ToolAdapter      | Tool Adapter — external tool integration, assertion submission                           |
+| M4     | Metacognition    | Metacognition — attention modes, forgetting mechanism, anomaly detection                 |
+| M5     | IntentionStack   | Intention Stack — task planning, hierarchical management, checkpoint recovery            |
+| M6     | Communication    | Communication — cross-Agent coordination, security filtering                             |
+| M7     | EventBus         | Event Bus — system event dispatching, publish/subscribe, history management              |
 
----
+***
 
 ## Architecture
 
@@ -140,7 +134,6 @@ PBSM (Predictive Belief State Machine) is a cognitive architecture framework bas
 
 The system uses a five-layer architecture: Python Application Layer → PyO3 Bridge Layer → Orchestrator Layer → Core Module Layer (M1–M6) → Storage Layer (SQLite/Sled/Snapshot). See the architecture diagram for details.
 
-
 ### Data Flow
 
 ![Data Flow](docs/pbsm-dataflow-en.png)
@@ -151,7 +144,7 @@ The system uses a five-layer architecture: Python Application Layer → PyO3 Bri
 
 📊 [View Deployment Diagram](docs/deployment_en.html)
 
----
+***
 
 ## Quick Start
 
@@ -196,7 +189,7 @@ cd adapters/tool_adapter
 pip install -e .
 ```
 
----
+***
 
 ## Python API Reference
 
@@ -204,29 +197,29 @@ The `pbsm_python` native module exposes the following PyO3 methods on `PyPbsmOrc
 
 ### Belief Graph Operations
 
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `create_belief` | `create_belief(node_type, name, attributes_json?, source?, source_type?, tags_json?, initial_confidence?)` | Create a belief node in the graph. `node_type` and `name` are required; all other parameters are optional. Returns the created belief's ID and details. |
-| `create_edge` | `create_edge(edge_type, source_id, target_id, confidence)` | Create a belief edge connecting two nodes. `edge_type` describes the relationship; `confidence` sets the edge's initial confidence score. |
-| `query_beliefs` | `query_beliefs(query_json)` | Query beliefs using a JSON filter. Supports `node_type`, `name_contains`, `tags`, `min_confidence`, and `limit` filters. |
-| `get_belief` | `get_belief(belief_id)` | Retrieve a single belief's full details by its ID. |
-| `get_belief_graph_stats` | `get_belief_graph_stats()` | Get aggregate statistics about the belief graph (node count, edge count, etc.). |
+| Method                   | Signature                                                                                                  | Description                                                                                                                                             |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create_belief`          | `create_belief(node_type, name, attributes_json?, source?, source_type?, tags_json?, initial_confidence?)` | Create a belief node in the graph. `node_type` and `name` are required; all other parameters are optional. Returns the created belief's ID and details. |
+| `create_edge`            | `create_edge(edge_type, source_id, target_id, confidence)`                                                 | Create a belief edge connecting two nodes. `edge_type` describes the relationship; `confidence` sets the edge's initial confidence score.               |
+| `query_beliefs`          | `query_beliefs(query_json)`                                                                                | Query beliefs using a JSON filter. Supports `node_type`, `name_contains`, `tags`, `min_confidence`, and `limit` filters.                                |
+| `get_belief`             | `get_belief(belief_id)`                                                                                    | Retrieve a single belief's full details by its ID.                                                                                                      |
+| `get_belief_graph_stats` | `get_belief_graph_stats()`                                                                                 | Get aggregate statistics about the belief graph (node count, edge count, etc.).                                                                         |
 
 ### Intention Stack Operations
 
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `push_intention` | `push_intention(description, priority?)` | Push a new intention onto the stack. `description` is required; `priority` is optional. |
-| `pop_intention` | `pop_intention()` | Pop the top-level intention from the stack (LIFO semantics). After a pop, the system automatically recomputes remaining nodes' levels and indices. |
-| `get_intention_stack_state` | `get_intention_stack_state()` | Get the current state of the intention stack, including all active intentions and their hierarchy. |
+| Method                      | Signature                                | Description                                                                                                                                        |
+| --------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `push_intention`            | `push_intention(description, priority?)` | Push a new intention onto the stack. `description` is required; `priority` is optional.                                                            |
+| `pop_intention`             | `pop_intention()`                        | Pop the top-level intention from the stack (LIFO semantics). After a pop, the system automatically recomputes remaining nodes' levels and indices. |
+| `get_intention_stack_state` | `get_intention_stack_state()`            | Get the current state of the intention stack, including all active intentions and their hierarchy.                                                 |
 
 ### Metacognition & Monitoring
 
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `get_attention_status` | `get_attention_status()` | Get the current attention mode and parameters (LowVigilance / ModerateFocus / HighReconnaissance). |
-| `detect_anomalies` | `detect_anomalies(window_size?)` | Run anomaly detection over the specified window. Detects oscillation, drift, excessive focus, and locked patterns. `window_size` is optional. |
-| `get_event_history` | `get_event_history(limit?)` | Retrieve recent events from the EventBus history. `limit` controls the maximum number of events returned. |
+| Method                 | Signature                        | Description                                                                                                                                   |
+| ---------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_attention_status` | `get_attention_status()`         | Get the current attention mode and parameters (LowVigilance / ModerateFocus / HighReconnaissance).                                            |
+| `detect_anomalies`     | `detect_anomalies(window_size?)` | Run anomaly detection over the specified window. Detects oscillation, drift, excessive focus, and locked patterns. `window_size` is optional. |
+| `get_event_history`    | `get_event_history(limit?)`      | Retrieve recent events from the EventBus history. `limit` controls the maximum number of events returned.                                     |
 
 ### Usage Example
 
@@ -269,24 +262,24 @@ anomalies = orchestrator.detect_anomalies(window_size=50)
 events = orchestrator.get_event_history(limit=20)
 ```
 
----
+***
 
 ## When to Use PBSM?
 
 PBSM is suitable for the following scenarios:
 
-| Scenario | Why PBSM |
-|----------|----------|
-| LLM/Agent needs to evaluate risks before acting | PBSM's prediction mechanism lets the Agent "think before it acts," avoiding irreversible operations |
-| Agent needs long-term memory and experience accumulation | Three-layer memory (raw logs / snapshots / experience) lets the Agent learn from history |
-| Multi-step tasks require planning and rollback | Intention Stack supports hierarchical goals, drift detection, checkpoint recovery |
-| Agent needs self-monitoring and self-correction | Metacognition automatically detects oscillation / drift / excessive focus and triggers interventions |
-| Multiple Agents need to share beliefs and coordinate | Communication module provides belief synchronization, conflict negotiation, security filtering |
-| Explainable Agent decisions are required | Every decision has a prediction basis; "why this action" is traceable |
+| Scenario                                                 | Why PBSM                                                                                             |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| LLM/Agent needs to evaluate risks before acting          | PBSM's prediction mechanism lets the Agent "think before it acts," avoiding irreversible operations  |
+| Agent needs long-term memory and experience accumulation | Three-layer memory (raw logs / snapshots / experience) lets the Agent learn from history             |
+| Multi-step tasks require planning and rollback           | Intention Stack supports hierarchical goals, drift detection, checkpoint recovery                    |
+| Agent needs self-monitoring and self-correction          | Metacognition automatically detects oscillation / drift / excessive focus and triggers interventions |
+| Multiple Agents need to share beliefs and coordinate     | Communication module provides belief synchronization, conflict negotiation, security filtering       |
+| Explainable Agent decisions are required                 | Every decision has a prediction basis; "why this action" is traceable                                |
 
-**Not suitable for**: Simple single-turn Q&A, stateless tool calls that don't need memory, pure computation tasks.
+**Not suitable for**: Simple single-turn Q\&A, stateless tool calls that don't need memory, pure computation tasks.
 
----
+***
 
 ## How to Integrate with LLM/Agent
 
@@ -438,17 +431,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Data Flow Summary
 
-| Step | LLM/Agent Input | PBSM Output | Description |
-|------|----------------|-------------|-------------|
-| Parse tool output | `RawOutput` (raw text + format) | `ParseResult` (structured assertion list) | Auto-detect format, extract entities/relations/events |
-| Submit assertions | `list[StructuredAssertion]` | `{"status", "accepted", "assertion_ids"}` | Assertions update the Belief Graph |
-| Start task | Task description string | `{"status", "description"}` | Creates a new intention in the Intention Stack |
-| Execute cycle | None | `{"attention_mode", "active_predictions", ...}` | Triggers prediction generation and metacognitive evaluation |
-| Verify prediction | Prediction ID + observations | `{"status", "residual", "confidence_change"}` | Residual drives belief correction |
-| Error handling | Error description + severity level | `{"anomaly_count", "intervention_applied"}` | Triggers metacognitive intervention |
-| Diagnostics | None | Belief Graph stats / consistency report / memory footprint | For operational monitoring |
+| Step              | LLM/Agent Input                    | PBSM Output                                                | Description                                                 |
+| ----------------- | ---------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------- |
+| Parse tool output | `RawOutput` (raw text + format)    | `ParseResult` (structured assertion list)                  | Auto-detect format, extract entities/relations/events       |
+| Submit assertions | `list[StructuredAssertion]`        | `{"status", "accepted", "assertion_ids"}`                  | Assertions update the Belief Graph                          |
+| Start task        | Task description string            | `{"status", "description"}`                                | Creates a new intention in the Intention Stack              |
+| Execute cycle     | None                               | `{"attention_mode", "active_predictions", ...}`            | Triggers prediction generation and metacognitive evaluation |
+| Verify prediction | Prediction ID + observations       | `{"status", "residual", "confidence_change"}`              | Residual drives belief correction                           |
+| Error handling    | Error description + severity level | `{"anomaly_count", "intervention_applied"}`                | Triggers metacognitive intervention                         |
+| Diagnostics       | None                               | Belief Graph stats / consistency report / memory footprint | For operational monitoring                                  |
 
----
+***
 
 ## Multi-Agent Support
 
@@ -462,38 +455,33 @@ Each Agent has its own `PbsmOrchestrator` instance (independent Belief Graph, In
 
 ### Core Capabilities
 
-| Capability | Module | Description |
-|------------|--------|-------------|
-| Belief synchronization | `SyncManager` | Synchronize Belief Graph snapshots between Agents; supports incremental and full sync |
-| Conflict detection | `ConflictDetector` | Detect attribute inconsistency, relation inconsistency, intent conflict, confidence conflict |
-| Conflict negotiation | `NegotiationHandler` | Resolve conflicts through proposal-counterproposal mechanism; supports automatic and manual negotiation |
-| Task delegation | `DelegationManager` | Delegate sub-tasks to other Agents; supports quality standards and timeout control |
-| Access control | `AccessController` | Role-based (Coordinator/Collaborator/Observer/Worker) permission management |
-| Data filtering | `SensitiveDataFilter` | Automatically filter/redact sensitive fields when sharing snapshots |
+| Capability             | Module                | Description                                                                                             |
+| ---------------------- | --------------------- | ------------------------------------------------------------------------------------------------------- |
+| Belief synchronization | `SyncManager`         | Synchronize Belief Graph snapshots between Agents; supports incremental and full sync                   |
+| Conflict detection     | `ConflictDetector`    | Detect attribute inconsistency, relation inconsistency, intent conflict, confidence conflict            |
+| Conflict negotiation   | `NegotiationHandler`  | Resolve conflicts through proposal-counterproposal mechanism; supports automatic and manual negotiation |
+| Task delegation        | `DelegationManager`   | Delegate sub-tasks to other Agents; supports quality standards and timeout control                      |
+| Access control         | `AccessController`    | Role-based (Coordinator/Collaborator/Observer/Worker) permission management                             |
+| Data filtering         | `SensitiveDataFilter` | Automatically filter/redact sensitive fields when sharing snapshots                                     |
 
 ### Multi-Agent Usage Notes
 
 1. **Each Agent has an independent instance**: Each Agent should create its own `PbsmOrchestrator`, avoiding shared-state concurrency issues. Belief synchronization is done through the Communication module, not shared memory.
-
 2. **Roles and permissions**: The Communication module defines 4 roles — `Coordinator`, `Collaborator`, `Observer`, `Worker`. Different roles have different read/write/delete/share/delegate permissions for resources (Snapshot/Belief/Relation/Intent/Prediction).
-
 3. **Conflict handling strategies**: When multiple Agents have different beliefs about the same thing:
    - `AttributeMismatch`: Attribute values disagree (e.g., Agent A believes CPU=92%, Agent B believes CPU=88%)
    - `RelationMismatch`: Relations disagree (e.g., causal chain divergence)
    - `IntentMismatch`: Intent conflicts (e.g., two Agents simultaneously modifying the same file)
    - `ValueConfidenceConflict`: Confidence conflicts (same fact, different confidence levels)
-
 4. **Sensitive data filtering**: Before sharing snapshots, you must configure `SensitiveDataFilter`, which supports 4 filtering actions:
    - `Remove`: Remove the field
    - `Redact`: Replace with `[REDACTED]`
    - `Mask`: Partial masking (e.g., `192.168.***.***`)
    - `Reject`: Reject the entire snapshot
-
 5. **Sync performance**: Belief synchronization involves 5 stages: snapshot construction → compression → transmission → verification → fusion. For large-scale Belief Graphs (>1000 nodes), incremental sync (`SyncRequestType::Incremental`) is recommended over full sync.
-
 6. **Current limitations**: The multi-Agent Communication module is currently implemented only at the Rust core layer and has not yet been exposed to Python bindings. Python users who need multi-Agent functionality must use the Rust API directly or wait for a future Python binding update.
 
----
+***
 
 ## Configuration Management
 
@@ -547,7 +535,7 @@ config.save_to_toml(Path::new("output.toml"))?;
 config.save_to_json(Path::new("output.json"))?;
 ```
 
----
+***
 
 ## Configuration Reference
 
@@ -627,29 +615,29 @@ archive_threshold_days = 30
 
 ### Configuration Fields
 
-| Section | Field | Type | Default | Description |
-|---------|-------|------|---------|-------------|
-| `graph` | `maxNodes` | usize | 500 | Maximum number of belief graph nodes |
-| `graph` | `maxEdges` | usize | 2000 | Maximum number of belief graph edges |
-| `graph` | `defaultConfidence` | f64 | 0.5 | Default confidence for new nodes |
-| `intention_stack` | `max_stack_depth` | usize | 20 | Maximum intention stack depth |
-| `intention_stack` | `max_stack_capacity` | usize | 500 | Maximum intention stack capacity |
-| `intention_stack` | `max_revert_depth` | usize | 5 | Maximum revert depth |
-| `metacognitive.attention` | `default_attention` | f64 | 0.5 | Default attention parameter (≤0.3 LowVigilance / 0.3–0.7 ModerateFocus / >0.7 HighReconnaissance) |
-| `metacognitive.attention` | `min_attention` | f64 | 0.1 | Attention lower bound |
-| `metacognitive.attention` | `max_attention` | f64 | 1.0 | Attention upper bound |
-| `metacognitive.forgetting` | `forget_threshold` | f64 | 0.2 | Forgetting threshold (beliefs below this value are evicted) |
-| `metacognitive.forgetting` | `max_active_beliefs` | usize | 500 | Maximum number of active beliefs |
-| `metacognitive.anomaly_detection` | `coverage_threshold` | f64 | 0.3 | Anomaly coverage threshold |
-| `metacognitive.anomaly_detection` | `oscillation_threshold` | usize | 5 | Oscillation detection threshold (consecutive adjustment count) |
-| `memory` | `storage_path` | PathBuf | "./data/memory" | Storage directory path |
-| `memory` | `cache_size` | usize | 100 | Cache size |
-| `memory` | `max_log_age_days` | u32 | 90 | Maximum log retention days |
-| `memory` | `compression_type` | enum | Lz4 | Compression algorithm (NONE/LZ4/ZSTD) |
-| `memory` | `base_confidence_threshold` | f64 | 0.4 | Base confidence threshold |
-| `memory` | `cleanup_auto_trigger_threshold` | f64 | 0.85 | Auto-cleanup trigger threshold |
+| Section                           | Field                            | Type    | Default         | Description                                                                                       |
+| --------------------------------- | -------------------------------- | ------- | --------------- | ------------------------------------------------------------------------------------------------- |
+| `graph`                           | `maxNodes`                       | usize   | 500             | Maximum number of belief graph nodes                                                              |
+| `graph`                           | `maxEdges`                       | usize   | 2000            | Maximum number of belief graph edges                                                              |
+| `graph`                           | `defaultConfidence`              | f64     | 0.5             | Default confidence for new nodes                                                                  |
+| `intention_stack`                 | `max_stack_depth`                | usize   | 20              | Maximum intention stack depth                                                                     |
+| `intention_stack`                 | `max_stack_capacity`             | usize   | 500             | Maximum intention stack capacity                                                                  |
+| `intention_stack`                 | `max_revert_depth`               | usize   | 5               | Maximum revert depth                                                                              |
+| `metacognitive.attention`         | `default_attention`              | f64     | 0.5             | Default attention parameter (≤0.3 LowVigilance / 0.3–0.7 ModerateFocus / >0.7 HighReconnaissance) |
+| `metacognitive.attention`         | `min_attention`                  | f64     | 0.1             | Attention lower bound                                                                             |
+| `metacognitive.attention`         | `max_attention`                  | f64     | 1.0             | Attention upper bound                                                                             |
+| `metacognitive.forgetting`        | `forget_threshold`               | f64     | 0.2             | Forgetting threshold (beliefs below this value are evicted)                                       |
+| `metacognitive.forgetting`        | `max_active_beliefs`             | usize   | 500             | Maximum number of active beliefs                                                                  |
+| `metacognitive.anomaly_detection` | `coverage_threshold`             | f64     | 0.3             | Anomaly coverage threshold                                                                        |
+| `metacognitive.anomaly_detection` | `oscillation_threshold`          | usize   | 5               | Oscillation detection threshold (consecutive adjustment count)                                    |
+| `memory`                          | `storage_path`                   | PathBuf | "./data/memory" | Storage directory path                                                                            |
+| `memory`                          | `cache_size`                     | usize   | 100             | Cache size                                                                                        |
+| `memory`                          | `max_log_age_days`               | u32     | 90              | Maximum log retention days                                                                        |
+| `memory`                          | `compression_type`               | enum    | Lz4             | Compression algorithm (NONE/LZ4/ZSTD)                                                             |
+| `memory`                          | `base_confidence_threshold`      | f64     | 0.4             | Base confidence threshold                                                                         |
+| `memory`                          | `cleanup_auto_trigger_threshold` | f64     | 0.85            | Auto-cleanup trigger threshold                                                                    |
 
----
+***
 
 ## Deployment
 
@@ -684,25 +672,25 @@ kubectl logs -f deployment/pbsm-server
 kubectl port-forward svc/pbsm-server 8080:8080
 ```
 
----
+***
 
 ## Benchmarks
 
 The project includes 11 criterion benchmark groups covering all core hot paths:
 
-| Benchmark Group | What It Tests |
-|----------------|---------------|
-| `belief_graph/create_belief` | Belief node creation (10/100/500 nodes) |
-| `belief_graph/query_by_type` | Query by type |
-| `belief_graph/query_by_tag` | Query by tag |
-| `event_bus/publish` | Event publishing (64/256/1024 capacity) |
-| `event_bus/subscribe_receive` | Subscribe and receive |
-| `metacognitive/attention` | Attention state query |
-| `metacognitive/anomaly_detection` | Anomaly detection |
-| `orchestrator/execute_cycle` | Execute cycle |
-| `orchestrator/start_task` | Start task |
-| `prediction_engine/create_prediction` | Create prediction |
-| `config/serialization` | TOML/JSON serialization |
+| Benchmark Group                       | What It Tests                           |
+| ------------------------------------- | --------------------------------------- |
+| `belief_graph/create_belief`          | Belief node creation (10/100/500 nodes) |
+| `belief_graph/query_by_type`          | Query by type                           |
+| `belief_graph/query_by_tag`           | Query by tag                            |
+| `event_bus/publish`                   | Event publishing (64/256/1024 capacity) |
+| `event_bus/subscribe_receive`         | Subscribe and receive                   |
+| `metacognitive/attention`             | Attention state query                   |
+| `metacognitive/anomaly_detection`     | Anomaly detection                       |
+| `orchestrator/execute_cycle`          | Execute cycle                           |
+| `orchestrator/start_task`             | Start task                              |
+| `prediction_engine/create_prediction` | Create prediction                       |
+| `config/serialization`                | TOML/JSON serialization                 |
 
 ```bash
 # Run benchmarks
@@ -711,7 +699,7 @@ cargo bench --bench pbsm_benchmarks
 # Reports generated in target/criterion/
 ```
 
----
+***
 
 ## Important Notes
 
@@ -770,11 +758,11 @@ Async methods in the PyO3 bindings (`start_task`, `execute_cycle`) internally cr
 - Each call creates a new Runtime, with some overhead
 - Not suitable for calling from within an existing tokio async context
 
-### IntentionStack pop_intention() Semantics
+### IntentionStack pop\_intention() Semantics
 
 IntentionStack's `pop_intention()` defaults to popping the top-level intention (LIFO semantics). After a pop, the system automatically recomputes remaining nodes' levels and indices, ensuring push/pop alternation does not hit the `max_depth` limit.
 
----
+***
 
 ## Testing
 
@@ -816,7 +804,7 @@ Current test coverage: **59+ Python tests**
 cargo bench --bench pbsm_benchmarks
 ```
 
----
+***
 
 ## Project Structure
 
@@ -873,7 +861,7 @@ pbsm/
     └── multi-agent.html          # Multi-Agent architecture diagram
 ```
 
----
+***
 
 ## License
 
