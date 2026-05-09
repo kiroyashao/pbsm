@@ -134,19 +134,21 @@ PBSM（Predictive Belief State Machine）是一个基于信念图（Belief Graph
 
 ### 完整分层架构
 
-![Layered Architecture](docs/architecture_zh.png)
+![Layered Architecture](docs/pbsm-architecture-zh.png)
 
 📊 [查看完整架构图](docs/architecture_zh.html)
 
 系统采用五层架构设计：Python 应用层 → PyO3 桥接层 → 编排器层 → 核心模块层（M1-M7）→ 存储层（SQLite/Sled/Snapshot）。详见架构图。
 
+### 数据流图
+
+![Data Flow](docs/pbsm-dataflow-zh.png)
+
+📊 [查看数据流图](docs/dataflow_zh.html)
+
 ### K8s 部署拓扑
 
 📊 [查看部署拓扑图](docs/deployment_zh.html)
-
-### 数据流图
-
-📊 [查看数据流图](docs/dataflow_zh.html)
 
 ---
 

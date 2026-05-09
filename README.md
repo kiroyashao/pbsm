@@ -134,19 +134,22 @@ PBSM (Predictive Belief State Machine) is a cognitive architecture framework bas
 
 ### Layered Architecture
 
-![Layered Architecture](docs/architecture_en.png)
+![Layered Architecture](docs/pbsm-architecture-en.png)
 
 📊 [View Full Architecture Diagram](docs/architecture_en.html)
 
 The system uses a five-layer architecture: Python Application Layer → PyO3 Bridge Layer → Orchestrator Layer → Core Module Layer (M1–M6) → Storage Layer (SQLite/Sled/Snapshot). See the architecture diagram for details.
 
-### Deployment Topology
-
-📊 [View Deployment Diagram](docs/deployment_en.html)
 
 ### Data Flow
 
+![Data Flow](docs/pbsm-dataflow-en.png)
+
 📊 [View Data Flow Diagram](docs/dataflow_en.html)
+
+### Deployment Topology
+
+📊 [View Deployment Diagram](docs/deployment_en.html)
 
 ---
 
