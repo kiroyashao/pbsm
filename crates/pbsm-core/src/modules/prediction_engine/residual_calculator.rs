@@ -347,7 +347,15 @@ impl ResidualCalculator {
             SemanticDimension::default()
         };
 
-        let nested: Vec<(String, f64)> = Vec::new();
+        let mut nested: Vec<(String, f64)> = Vec::new();
+        for change in expected_changes {
+            if let Some(nested_obj) = change.expected_value.as_object() {
+                for (key, val) in nested_obj {
+                    let depth_score = if val.is_object() || val.is_array() { 0.5 } else { 0.2 };
+                    nested.push((key.clone(), depth_score));
+                }
+            }
+        }
         let structural = StructuralDimension::compute(&expected_fields, &actual_fields, &nested);
 
         (numerical, semantic, structural)
