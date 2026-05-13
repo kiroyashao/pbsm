@@ -9,8 +9,9 @@ use crate::modules::communication::error::CommunicationError;
 use crate::modules::communication::types::{
     comm_edge_type_from_relation, comm_node_type_from_belief, CommAttributeValue,
     CommSnapshotScope, CommunicationSnapshot, ConstructedSnapshot, ConstructionOptions,
-    ConstructionReport, EntityBelief, EntityReference, Priority, RelationBelief, ResidualDetail,
-    SnapshotMetadata as CommSnapshotMetadata, SnapshotPurpose, SourceAgent,
+    ConstructionReport, EntityBelief, EntityReference, IntentionSummary, Priority,
+    RelationBelief, ResidualDetail, SnapshotMetadata as CommSnapshotMetadata, SnapshotPurpose,
+    SourceAgent,
 };
 
 use super::filter::FieldFilter;
@@ -20,6 +21,10 @@ pub struct SnapshotConstructor {
     agent_id: String,
     agent_type: String,
     capabilities: Vec<String>,
+    /// 存储可选的意图摘要数据
+    intention_data: Option<IntentionSummary>,
+    /// 存储预测残差明细
+    prediction_residuals: Vec<ResidualDetail>,
 }
 
 impl SnapshotConstructor {
@@ -34,7 +39,19 @@ impl SnapshotConstructor {
             agent_id,
             agent_type,
             capabilities,
+            intention_data: None,
+            prediction_residuals: vec![],
         }
+    }
+
+    pub fn with_intention_summary(mut self, summary: IntentionSummary) -> Self {
+        self.intention_data = Some(summary);
+        self
+    }
+
+    pub fn with_prediction_residuals(mut self, residuals: Vec<ResidualDetail>) -> Self {
+        self.prediction_residuals = residuals;
+        self
     }
 
     pub fn construct_snapshot(
@@ -174,8 +191,8 @@ impl SnapshotConstructor {
         drop(nodes);
         drop(edges);
 
-        let intention_summary = None;
-        let prediction_residual_summary: Vec<ResidualDetail> = vec![];
+        let intention_summary = self.intention_data.clone();
+        let prediction_residual_summary = self.prediction_residuals.clone();
 
         let mut snapshot = CommunicationSnapshot {
             snapshot_id: snapshot_id.clone(),
