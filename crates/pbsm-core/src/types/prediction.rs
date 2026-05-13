@@ -58,8 +58,11 @@ impl PredictionState {
     /// # 状态转换矩阵
     ///
     /// 只有 `Pending` 状态可以转换到其他状态，其他状态均为终态
-    pub fn can_transition_to(&self, _target: PredictionState) -> bool {
-        matches!(self, PredictionState::Pending)
+    pub fn can_transition_to(&self, target: PredictionState) -> bool {
+        match self {
+            PredictionState::Pending => !matches!(target, PredictionState::Pending),
+            _ => false,
+        }
     }
 
     /// 判断当前状态是否为终态

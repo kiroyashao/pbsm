@@ -213,8 +213,9 @@ impl AttentionController {
         let foci: Vec<FocusItem> = top_residuals
             .iter()
             .map(|r| {
-                let relevance = if let Some(_goal_id) = top_goal_id {
-                    1.0 / (1.0 + r.graph_distance as f64)
+                let relevance = if let Some(goal_id) = top_goal_id {
+                    let goal_factor = (goal_id.len() as f64 % 5.0 + 1.0) / 5.0;
+                    goal_factor / (1.0 + r.graph_distance as f64)
                 } else {
                     0.5
                 };

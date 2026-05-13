@@ -295,13 +295,30 @@ impl PredictionGenerator {
         action_request: &ActionRequest,
         previous_value: &serde_json::Value,
     ) -> serde_json::Value {
-        {
-            if let Some(params) = action_request.parameters.as_object() {
-                if let Some(expected) = params.get("expected_value") {
-                    return expected.clone();
+        if let Some(params) = action_request.parameters.as_object() {
+            if let Some(expected) = params.get("expected_value") {
+                return expected.clone();
+            }
+            if let Some(new_value) = params.get("new_value") {
+                return new_value.clone();
+            }
+            if let Some(value) = params.get("value") {
+                return value.clone();
+            }
+        }
+        match action_request.action_type {
+            ActionType::BeliefUpdate => {
+                if previous_value.is_boolean() {
+                    serde_json::json!(!previous_value.as_bool().unwrap_or(true))
+                } else if previous_value.is_number() {
+                    serde_json::json!(previous_value.as_f64().unwrap_or(0.0) * 1.1)
+                } else {
+                    previous_value.clone()
                 }
             }
-            previous_value.clone()
+            ActionType::StateTransition => previous_value.clone(),
+            ActionType::InformationQuery => previous_value.clone(),
+            _ => previous_value.clone(),
         }
     }
 
