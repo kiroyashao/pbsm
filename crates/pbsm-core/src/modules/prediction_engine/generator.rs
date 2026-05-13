@@ -23,7 +23,7 @@ use uuid::Uuid;
 use crate::error::PredictionError;
 use crate::modules::common::{BeliefGraphReader, BeliefNode, NullBeliefGraphReader};
 use crate::types::prediction::{
-    ActionRequest, AssociatedAction, ChangeType, ContextSnapshot, ExpectedChange,
+    ActionRequest, ActionType, AssociatedAction, ChangeType, ContextSnapshot, ExpectedChange,
     ExpectedObservation, ExtractionHints, FieldMapping, Prediction, PredictionState,
     ValidityWindow,
 };
@@ -194,6 +194,12 @@ impl PredictionGenerator {
     ) -> Result<Vec<ExpectedChange>, PredictionError> {
         let mut expected_changes = Vec::new();
 
+        let change_type = match action_request.action_type {
+            ActionType::BeliefUpdate | ActionType::StateTransition => ChangeType::Modify,
+            ActionType::InformationQuery => ChangeType::Preserve,
+            _ => ChangeType::Modify,
+        };
+
         if let Some(ref target_id) = action_request.target_id {
             let target_node = context
                 .target_beliefs
@@ -204,20 +210,58 @@ impl PredictionGenerator {
                 .map(|n| n.attributes.clone())
                 .unwrap_or(serde_json::Value::Null);
 
-            let change_type = ChangeType::Modify;
+            let attribute = action_request
+                .parameters
+                .get("attribute")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    target_node
+                        .and_then(|n| n.attributes.as_object())
+                        .and_then(|obj| obj.keys().next().cloned())
+                })
+                .unwrap_or_else(|| "state".to_string());
+
+            let expected_confidence = target_node
+                .map(|n| n.confidence * 0.9)
+                .unwrap_or(0.5);
 
             let expected_value = self.derive_expected_value(action_request, &previous_value);
 
             expected_changes.push(ExpectedChange {
                 change_id: Uuid::new_v4(),
                 node_id: target_id.clone(),
-                attribute: Some("state".to_string()),
+                attribute: Some(attribute),
                 expected_value,
                 previous_value,
                 change_type,
-                expected_confidence: 0.8,
+                expected_confidence,
                 derivation_path: vec!["generator".to_string()],
             });
+
+            for related_node in context
+                .target_beliefs
+                .iter()
+                .filter(|n| n.node_id != *target_id)
+            {
+                let related_previous = related_node.attributes.clone();
+                let related_attribute = related_previous
+                    .as_object()
+                    .and_then(|obj| obj.keys().next().cloned())
+                    .unwrap_or_else(|| "state".to_string());
+                let related_confidence = related_node.confidence * 0.9 * 0.7;
+
+                expected_changes.push(ExpectedChange {
+                    change_id: Uuid::new_v4(),
+                    node_id: related_node.node_id.clone(),
+                    attribute: Some(related_attribute),
+                    expected_value: related_previous.clone(),
+                    previous_value: related_previous,
+                    change_type,
+                    expected_confidence: related_confidence,
+                    derivation_path: vec!["generator".to_string(), "related".to_string()],
+                });
+            }
         }
 
         Ok(expected_changes)

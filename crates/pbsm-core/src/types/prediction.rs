@@ -87,10 +87,13 @@ impl PredictionState {
 pub enum ActionType {
     /// 工具调用动作：通过工具接口执行的外部操作，如文件操作、API调用等
     ToolCall,
-    /// 用户消息动作：来自用户的输入或指令
+    /// 用户消息动作：来自用户的输入或指令  
     UserMessage,
     /// 内部推理动作：Agent内部的推理或计算过程
     InternalInference,
+    StateTransition,
+    BeliefUpdate,
+    InformationQuery,
 }
 
 /// 变化类型枚举，描述预期状态变化的类别
