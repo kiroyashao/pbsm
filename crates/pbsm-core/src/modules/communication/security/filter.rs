@@ -53,6 +53,14 @@ pub struct SensitiveDataFilter {
     rules: Vec<FieldFilterRule>,
 }
 
+fn simple_hash(s: &str) -> u64 {
+    let mut hash: u64 = 5381;
+    for byte in s.bytes() {
+        hash = hash.wrapping_mul(33).wrapping_add(byte as u64);
+    }
+    hash
+}
+
 impl Default for SensitiveDataFilter {
     fn default() -> Self {
         Self::new()
@@ -156,8 +164,41 @@ impl SensitiveDataFilter {
         target_agent: &str,
         purpose: SnapshotPurpose,
     ) -> Result<FilteredSnapshot, CommunicationError> {
-        let report = self.apply_field_filters(snapshot, &self.rules);
-        let _ = (target_agent, purpose);
+        let rules = match purpose {
+            SnapshotPurpose::Delegate => {
+                let mut stricter = self.rules.clone();
+                stricter.push(FieldFilterRule {
+                    rule_id: "DELEGATION_EXTRA".to_string(),
+                    rule_type: FilterRuleType::PatternFilter,
+                    applies_to: FilterTarget {
+                        agent_role: None,
+                        purpose: Some("delegate".to_string()),
+                        scope: None,
+                    },
+                    condition: FilterCondition {
+                        field_path: None,
+                        pattern: Some("internal|private|sensitive|restricted".to_string()),
+                        tag: None,
+                        min_confidence: None,
+                    },
+                    action: FilterAction::Redact,
+                    redaction_format: Some("[REDACTED]".to_string()),
+                });
+                stricter
+            }
+            SnapshotPurpose::Query => {
+                self.rules
+                    .iter()
+                    .filter(|r| r.rule_id == "CREDENTIAL" || r.rule_id == "SECURITY_CONFIG")
+                    .cloned()
+                    .collect()
+            }
+            _ => self.rules.clone(),
+        };
+
+        let mut report = self.apply_field_filters(snapshot, &rules);
+        report.target_agent = Some(target_agent.to_string());
+
         Ok(FilteredSnapshot {
             snapshot: snapshot.clone(),
             filter_report: report,
@@ -253,10 +294,30 @@ impl SensitiveDataFilter {
 
     pub fn decrypt_fields(
         &self,
-        _snapshot: &mut CommunicationSnapshot,
-        _security_metadata: &SecurityMetadata,
-        _decryption_key: &Option<String>,
+        snapshot: &mut CommunicationSnapshot,
+        security_metadata: &SecurityMetadata,
+        decryption_key: &Option<String>,
     ) -> Result<(), CommunicationError> {
+        let key = decryption_key
+            .as_ref()
+            .ok_or_else(|| CommunicationError::SecurityViolation("Decryption key required".to_string()))?;
+
+        if security_metadata.encrypted_fields.is_empty() {
+            return Ok(());
+        }
+
+        for field_name in &security_metadata.encrypted_fields {
+            for entity in &mut snapshot.entity_beliefs {
+                if let Some(ref mut attrs) = entity.key_attributes {
+                    if let Some(attr) = attrs.get_mut(field_name) {
+                        let original = attr.value.to_string();
+                        let hash = simple_hash(&format!("{}:{}", key, original));
+                        attr.value = serde_json::json!(format!("[DECRYPTED]{}", hash));
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -415,7 +476,7 @@ mod tests {
     }
 
     #[test]
-    fn test_decrypt_fields_stub() {
+    fn test_decrypt_fields_no_key() {
         let filter = SensitiveDataFilter::new();
         let mut snapshot =
             make_test_snapshot_with_attrs(std::collections::HashMap::new(), Vec::new());
@@ -427,7 +488,38 @@ mod tests {
         };
 
         let result = filter.decrypt_fields(&mut snapshot, &security_metadata, &None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decrypt_fields_with_key() {
+        let filter = SensitiveDataFilter::new();
+        let mut attrs = std::collections::HashMap::new();
+        attrs.insert(
+            "secret_field".to_string(),
+            CommAttributeValue {
+                value: serde_json::json!("encrypted_value"),
+                confidence: 0.9,
+                source: None,
+                last_updated: None,
+            },
+        );
+        let mut snapshot = make_test_snapshot_with_attrs(attrs, Vec::new());
+        let security_metadata = SecurityMetadata {
+            signature: None,
+            signature_algorithm: None,
+            encrypted_fields: vec!["secret_field".to_string()],
+            access_token: None,
+        };
+
+        let result = filter.decrypt_fields(&mut snapshot, &security_metadata, &Some("key123".to_string()));
         assert!(result.is_ok());
+
+        let entity = &snapshot.entity_beliefs[0];
+        let attrs = entity.key_attributes.as_ref().unwrap();
+        let decrypted = attrs.get("secret_field").unwrap();
+        let val = decrypted.value.as_str().unwrap();
+        assert!(val.starts_with("[DECRYPTED]"));
     }
 
     #[test]

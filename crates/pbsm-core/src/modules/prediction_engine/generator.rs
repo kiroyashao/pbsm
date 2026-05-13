@@ -55,7 +55,6 @@ impl Default for ContextHint {
 /// - 依赖信念图管理器获取上下文
 /// - 使用配置参数控制生成行为
 /// - 四阶段流水线处理
-#[allow(dead_code)]
 pub struct PredictionGenerator {
     belief_graph: Arc<dyn BeliefGraphReader>,
     default_validity_window: ValidityWindow,

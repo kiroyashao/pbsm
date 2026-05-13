@@ -49,7 +49,6 @@ use crate::types::prediction::{ActionRequest, Observation, Prediction, Predictio
 /// - 协调生成器和验证器的工作
 /// - 提供统一的预测管理接口
 /// - 发布预测相关事件
-#[allow(dead_code)]
 pub struct PredictionEngine {
     predictions: RwLock<HashMap<String, Prediction>>,
     generator: PredictionGenerator,

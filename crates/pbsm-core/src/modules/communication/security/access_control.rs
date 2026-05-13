@@ -254,15 +254,15 @@ impl AccessController {
         &self,
         requester: &AgentAuthInfo,
         resource_type: ResourceType,
-        _scope: &CommSnapshotScope,
+        scope: &CommSnapshotScope,
         action: AccessAction,
     ) -> Result<AuthorizationDecision, CommunicationError> {
-        self.check_authorization(AuthorizationRequest {
+        let mut decision = self.check_authorization(AuthorizationRequest {
             requester: requester.clone(),
             resource: ResourceDescriptor {
                 resource_type,
                 resource_id: None,
-                scope: None,
+                scope: Some(scope.clone()),
             },
             action,
             context: AuthorizationContext {
@@ -270,7 +270,42 @@ impl AccessController {
                 delegation_chain: Vec::new(),
                 time_constraints: None,
             },
-        })
+        })?;
+
+        let is_restrictive = !scope.entity_types.is_empty() || !scope.topics.is_empty();
+
+        if is_restrictive {
+            if !scope.entity_types.is_empty() {
+                decision.conditions.push(AuthorizationCondition {
+                    field: "entity_type".to_string(),
+                    operator: ConditionOperator::Contains,
+                    value: serde_json::json!(scope
+                        .entity_types
+                        .iter()
+                        .map(|t| format!("{:?}", t))
+                        .collect::<Vec<_>>()),
+                });
+            }
+            if !scope.topics.is_empty() {
+                decision.conditions.push(AuthorizationCondition {
+                    field: "topic".to_string(),
+                    operator: ConditionOperator::Contains,
+                    value: serde_json::json!(scope.topics),
+                });
+            }
+
+            if requester.role == AgentRole::Observer && decision.outcome == DecisionOutcome::Permitted
+            {
+                decision.outcome = DecisionOutcome::Conditional;
+                decision.obligations.push(Obligation {
+                    obligation_type: ObligationType::Audit,
+                    description: "Observer access restricted to scoped resources".to_string(),
+                    parameters: HashMap::new(),
+                });
+            }
+        }
+
+        Ok(decision)
     }
 }
 

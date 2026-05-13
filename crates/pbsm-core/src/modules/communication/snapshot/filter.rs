@@ -117,6 +117,8 @@ pub struct FilterReport {
     pub relations_filtered: usize,
     pub filtered_fields: Vec<String>,
     pub filtered_types: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_agent: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

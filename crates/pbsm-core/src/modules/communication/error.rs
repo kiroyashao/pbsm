@@ -32,6 +32,9 @@ pub enum CommunicationError {
     #[error("Access denied: {0}")]
     AccessDenied(String),
 
+    #[error("Security violation: {0}")]
+    SecurityViolation(String),
+
     #[error("Conflict detected: {0}")]
     ConflictDetected(String),
 
@@ -88,6 +91,9 @@ impl PartialEq for CommunicationError {
             ) | (
                 CommunicationError::AccessDenied(_),
                 CommunicationError::AccessDenied(_)
+            ) | (
+                CommunicationError::SecurityViolation(_),
+                CommunicationError::SecurityViolation(_)
             ) | (
                 CommunicationError::ConflictDetected(_),
                 CommunicationError::ConflictDetected(_)

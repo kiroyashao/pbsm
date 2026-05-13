@@ -219,11 +219,18 @@ impl DelegationManager {
 
     pub fn delegate_with_matching(
         &self,
-        task: TaskSpecification,
+        mut task: TaskSpecification,
         required_capabilities: Vec<String>,
     ) -> Result<DelegationResult, CommunicationError> {
-        let _ = required_capabilities;
-        self.delegate(task, None, None)
+        task.required_capabilities = required_capabilities;
+        let options = DelegationOptions {
+            delegatee: None,
+            fallback_strategy: None,
+            max_retries: None,
+            timeout_ms: None,
+            priority: None,
+        };
+        self.delegate(task, None, Some(options))
     }
 
     pub fn get_delegation_status(
