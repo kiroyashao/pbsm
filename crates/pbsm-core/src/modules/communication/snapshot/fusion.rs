@@ -34,7 +34,7 @@ impl SnapshotFusion {
     pub fn fuse_snapshot_with_graph(
         &self,
         snapshot: &CommunicationSnapshot,
-        _target_agent: &str,
+        target_agent: &str,
         fusion_options: Option<FusionOptions>,
     ) -> Result<CommFusionResult, CommunicationError> {
         let start = Instant::now();
@@ -73,6 +73,8 @@ impl SnapshotFusion {
         }
         drop(local_nodes);
 
+        let is_self_fusion = target_agent == snapshot.snapshot_metadata.source_agent.agent_id;
+
         for entity in &snapshot.entity_beliefs {
             let parsed_uuid = uuid::Uuid::parse_str(&entity.node_id).ok();
             let local_node_id = if let Some(uid) = parsed_uuid {
@@ -94,6 +96,35 @@ impl SnapshotFusion {
 
                 if has_conflict {
                     conflicts_detected += 1;
+
+                    if is_self_fusion {
+                        let _ =
+                            self.merge_entity(local_id, entity, ConflictResolutionStrategy::LastWriteWins, auto_merge_threshold);
+                        conflicts_resolved += 1;
+                        nodes_updated += 1;
+
+                        let (added, updated, unchanged) =
+                            self.compute_attribute_changes(local_id, entity);
+
+                        entity_fusion_results.push(EntityFusionResult {
+                            node_id: entity.node_id.clone(),
+                            action: FusionAction::Update,
+                            changes: FusionChanges {
+                                added_attributes: added,
+                                updated_attributes: updated,
+                                unchanged_attributes: unchanged,
+                            },
+                            confidence_after_fusion: self
+                                .compute_merged_confidence(local_id, entity),
+                        });
+
+                        node_mappings.push(NodeMapping {
+                            external_node_id: entity.node_id.clone(),
+                            local_node_id: Some(local_id.to_string()),
+                            mapping_type: MappingType::IdMatch,
+                        });
+                        continue;
+                    }
 
                     match strategy {
                         ConflictResolutionStrategy::AutoMerge
