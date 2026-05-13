@@ -594,6 +594,7 @@ min_adjustment_interval_ms = 100
 recency_decay_lambda = 0.05
 access_window_size = 50
 max_access_threshold = 10
+forget_threshold = 0.2
 
 [metacognitive.value_evaluation.weights]
 goal_relevance_weight = 0.35
