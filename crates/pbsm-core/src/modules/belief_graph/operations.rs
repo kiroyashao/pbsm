@@ -346,7 +346,9 @@ impl BeliefGraphOperations {
         let nodes = graph.nodes().read();
         let indexes = graph.indexes_mut().read();
 
-        let candidates = Self::get_candidates(&nodes, &indexes, &spec);
+        let adjacency = graph.adjacency_mut().read();
+        let candidates = Self::get_candidates(&nodes, &indexes, &adjacency, &spec);
+        drop(adjacency);
         let mut results: Vec<BeliefNode> = candidates
             .into_iter()
             .filter_map(|id| nodes.get(&id).cloned())
@@ -415,6 +417,7 @@ impl BeliefGraphOperations {
     fn get_candidates(
         nodes: &std::collections::HashMap<BeliefId, BeliefNode>,
         indexes: &super::graph::GraphIndexes,
+        adjacency: &super::graph::AdjacencyList,
         spec: &QuerySpecification,
     ) -> HashSet<BeliefId> {
         match spec.query_type {
@@ -472,9 +475,78 @@ impl BeliefGraphOperations {
             QueryType::ByConfidenceRange => {
                 indexes.query_by_confidence_range(spec.min_confidence, spec.max_confidence)
             }
-            QueryType::ByRelation => HashSet::new(),
-            QueryType::ByTimeRange => HashSet::new(),
-            QueryType::GraphTraversal => HashSet::new(),
+            QueryType::ByRelation => {
+                if let Some(source_id) = spec.source_id {
+                    let direction = spec.direction.unwrap_or(EdgeDirection::Both);
+                    let edge_pairs: Vec<(EdgeId, BeliefId)> = match direction {
+                        EdgeDirection::Outgoing => adjacency.get_outgoing_edges(source_id),
+                        EdgeDirection::Incoming => adjacency.get_incoming_edges(source_id),
+                        EdgeDirection::Both => {
+                            let mut edges = adjacency.get_outgoing_edges(source_id);
+                            edges.extend(adjacency.get_incoming_edges(source_id));
+                            edges
+                        }
+                    };
+                    edge_pairs.into_iter().map(|(_, node_id)| node_id).collect()
+                } else {
+                    let mut result = HashSet::new();
+                    for node_id in adjacency.outgoing.keys() {
+                        if nodes.contains_key(node_id) {
+                            result.insert(*node_id);
+                        }
+                    }
+                    for node_id in adjacency.incoming.keys() {
+                        if nodes.contains_key(node_id) {
+                            result.insert(*node_id);
+                        }
+                    }
+                    result
+                }
+            }
+            QueryType::ByTimeRange => {
+                let mut result = HashSet::new();
+                for (id, node) in nodes {
+                    let time = node.metadata.last_modified;
+                    let after_start = spec.start_time.map_or(true, |st| time >= st);
+                    let before_end = spec.end_time.map_or(true, |et| time <= et);
+                    if after_start && before_end {
+                        result.insert(*id);
+                    }
+                }
+                result
+            }
+            QueryType::GraphTraversal => {
+                if let Some(start_id) = spec.start_node_id {
+                    if !nodes.contains_key(&start_id) {
+                        return HashSet::new();
+                    }
+                    let max_depth = spec.max_depth.unwrap_or(3);
+                    let mut visited = HashSet::new();
+                    let mut queue = VecDeque::new();
+                    visited.insert(start_id);
+                    queue.push_back((start_id, 0));
+                    while let Some((current_id, depth)) = queue.pop_front() {
+                        if depth >= max_depth {
+                            continue;
+                        }
+                        let neighbors: Vec<BeliefId> = adjacency
+                            .get_outgoing_edges(current_id)
+                            .into_iter()
+                            .chain(adjacency.get_incoming_edges(current_id))
+                            .map(|(_, neighbor_id)| neighbor_id)
+                            .collect();
+                        for neighbor_id in neighbors {
+                            if !visited.contains(&neighbor_id) && nodes.contains_key(&neighbor_id) {
+                                visited.insert(neighbor_id);
+                                queue.push_back((neighbor_id, depth + 1));
+                            }
+                        }
+                    }
+                    visited
+                } else {
+                    HashSet::new()
+                }
+            }
         }
     }
 
@@ -762,7 +834,7 @@ impl BeliefGraphOperations {
     pub fn derive_beliefs(
         graph: &BeliefGraph,
         start_node_id: BeliefId,
-        _target_attributes: Vec<String>,
+        target_attributes: Vec<String>,
         inference_depth: u32,
         confidence_threshold: f64,
     ) -> Result<Vec<DerivationResult>> {
@@ -775,7 +847,7 @@ impl BeliefGraphOperations {
         let mut results = Vec::new();
         let mut visited = HashSet::new();
         let mut queue = VecDeque::new();
-        queue.push_back((start_node_id, 0, Vec::new()));
+        queue.push_back((start_node_id, 0u32, Vec::<DerivationStep>::new()));
 
         while let Some((current_id, depth, path)) = queue.pop_front() {
             if depth >= inference_depth {
@@ -788,10 +860,23 @@ impl BeliefGraphOperations {
             visited.insert(current_id);
 
             let adjacency = graph.adjacency_mut().read();
-            let edges = adjacency.get_outgoing_edges(current_id);
+            let edge_ids = adjacency.get_outgoing_edges(current_id);
             let edges_lock = graph.edges().read();
+            let nodes_lock = graph.nodes().read();
 
-            for (edge_id, neighbor_id) in edges {
+            let current_node = match nodes_lock.get(&current_id) {
+                Some(n) => n,
+                None => continue,
+            };
+
+            let attributes_to_propagate: Vec<(String, AttributeValue)> = current_node
+                .attributes
+                .iter()
+                .filter(|(key, _)| target_attributes.is_empty() || target_attributes.contains(key))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+
+            for (edge_id, neighbor_id) in edge_ids {
                 if visited.contains(&neighbor_id) {
                     continue;
                 }
@@ -801,40 +886,74 @@ impl BeliefGraphOperations {
                     None => continue,
                 };
 
-                let new_path = {
-                    let mut p = path.clone();
-                    p.push(DerivationStep {
-                        node_id: neighbor_id,
-                        edge_id: Some(edge_id),
-                        rule: format!("{:?}_propagation", edge.edge_type),
-                    });
-                    p
+                let neighbor_node = match nodes_lock.get(&neighbor_id) {
+                    Some(n) => n,
+                    None => continue,
                 };
 
-                if depth + 1 < inference_depth {
-                    queue.push_back((neighbor_id, depth + 1, new_path));
-                }
-            }
-        }
+                let propagation_rule = format!("{:?}_propagation", edge.edge_type);
+                let decay_factor = 0.9f64.powi(depth as i32 + 1);
 
-        let nodes = graph.nodes().read();
-        for (node_id, depth, path) in queue.into_iter().take(100) {
-            let _ = depth;
-            if let Some(node) = nodes.get(&node_id) {
-                let avg_conf = node.average_confidence();
-                if avg_conf >= confidence_threshold {
-                    let derived_value = serde_json::json!({
-                        "derived_from": start_node_id.to_string(),
-                        "node_name": node.name,
-                        "attributes": node.attributes.keys().collect::<Vec<_>>(),
+                let mut derived_attrs = HashMap::new();
+
+                for (attr_key, attr_value) in &attributes_to_propagate {
+                    if neighbor_node.attributes.contains_key(attr_key) {
+                        continue;
+                    }
+
+                    let derived_confidence =
+                        attr_value.confidence * edge.confidence * decay_factor;
+
+                    if derived_confidence < confidence_threshold {
+                        continue;
+                    }
+
+                    derived_attrs.insert(
+                        attr_key.clone(),
+                        AttributeValue::new(
+                            attr_value.value.clone(),
+                            derived_confidence,
+                            format!(
+                                "derived_from:{}",
+                                current_id
+                            ),
+                            SourceType::Derived,
+                        ),
+                    );
+                }
+
+                if !derived_attrs.is_empty() {
+                    let min_confidence = derived_attrs
+                        .values()
+                        .map(|v| v.confidence)
+                        .fold(f64::INFINITY, f64::min);
+
+                    let mut new_path = path.clone();
+                    new_path.push(DerivationStep {
+                        node_id: neighbor_id,
+                        edge_id: Some(edge_id),
+                        rule: propagation_rule.clone(),
                     });
 
                     results.push(DerivationResult {
-                        attribute: path.last().map(|p| p.rule.clone()).unwrap_or_default(),
-                        derived_value,
-                        confidence: avg_conf * 0.8,
-                        derivation_path: path,
+                        derived_node_id: neighbor_id,
+                        derived_attributes: derived_attrs,
+                        confidence: min_confidence,
+                        derivation_path: new_path.clone(),
+                        derivation_rule: propagation_rule,
                     });
+
+                    if depth + 1 < inference_depth {
+                        queue.push_back((neighbor_id, depth + 1, new_path));
+                    }
+                } else if depth + 1 < inference_depth {
+                    let mut new_path = path.clone();
+                    new_path.push(DerivationStep {
+                        node_id: neighbor_id,
+                        edge_id: Some(edge_id),
+                        rule: propagation_rule,
+                    });
+                    queue.push_back((neighbor_id, depth + 1, new_path));
                 }
             }
         }
