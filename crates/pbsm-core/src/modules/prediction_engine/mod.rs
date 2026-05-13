@@ -37,7 +37,7 @@ use crate::error::PredictionError;
 use crate::modules::common::{
     BeliefGraphReader, EventPublisher, NullBeliefGraphReader, NullEventPublisher, PredictionEvent,
 };
-use crate::types::filter::{PredictionFilter, PredictionList, PredictionStatistics};
+use crate::types::filter::{ErrorPattern, PredictionFilter, PredictionList, PredictionStatistics};
 use crate::types::prediction::{ActionRequest, Observation, Prediction, PredictionState};
 
 /// 预测引擎主结构体
@@ -292,6 +292,10 @@ impl PredictionEngine {
         let mut total_residual = 0.0;
         let mut verified_count = 0u64;
         let mut falsified_count = 0u64;
+        let mut latency_sum = 0.0_f64;
+        let mut latency_count = 0u64;
+        let mut error_pattern_counts: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::new();
 
         for pred in predictions.values() {
             *by_status.entry(format!("{:?}", pred.status)).or_insert(0) += 1;
@@ -306,8 +310,28 @@ impl PredictionEngine {
                     .or_insert(0) += 1;
 
                 match pred.status {
-                    PredictionState::Verified => verified_count += 1,
-                    PredictionState::Falsified => falsified_count += 1,
+                    PredictionState::Verified => {
+                        verified_count += 1;
+                        if let Some(verified_at) = pred.metadata.verified_at {
+                            let latency =
+                                (verified_at - pred.metadata.created_at).num_milliseconds() as f64;
+                            latency_sum += latency;
+                            latency_count += 1;
+                        }
+                    }
+                    PredictionState::Falsified => {
+                        falsified_count += 1;
+                        let latency = (residual.metadata.computed_at
+                            - pred.metadata.created_at)
+                            .num_milliseconds() as f64;
+                        latency_sum += latency;
+                        latency_count += 1;
+                        for component in &residual.component_residuals {
+                            *error_pattern_counts
+                                .entry(component.attribute.clone())
+                                .or_insert(0) += 1;
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -317,6 +341,14 @@ impl PredictionEngine {
             .values()
             .filter(|p| p.status != PredictionState::Pending)
             .count() as f64;
+
+        let mut error_patterns: Vec<_> = error_pattern_counts.into_iter().collect();
+        error_patterns.sort_by_key(|b| std::cmp::Reverse(b.1));
+        let top_error_patterns = error_patterns
+            .into_iter()
+            .take(5)
+            .map(|(pattern, count)| ErrorPattern { pattern, count })
+            .collect();
 
         PredictionStatistics {
             total,
@@ -338,8 +370,12 @@ impl PredictionEngine {
             } else {
                 0.0
             },
-            average_latency_ms: 0.0,
-            top_error_patterns: Vec::new(),
+            average_latency_ms: if latency_count > 0 {
+                latency_sum / latency_count as f64
+            } else {
+                0.0
+            },
+            top_error_patterns,
         }
     }
 

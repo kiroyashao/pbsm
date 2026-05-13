@@ -43,9 +43,28 @@ pub struct SyncError {
     pub message: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct SyncStateData {
+    pub direction: SyncDirection,
+    pub progress: Option<SyncProgress>,
+    pub last_activity: DateTime<Utc>,
+    pub errors: Vec<SyncError>,
+}
+
+impl Default for SyncStateData {
+    fn default() -> Self {
+        Self {
+            direction: SyncDirection::Outbound,
+            progress: None,
+            last_activity: Utc::now(),
+            errors: Vec::new(),
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct SyncStateMachine {
-    states: HashMap<String, SyncState>,
+    states: HashMap<String, (SyncState, SyncStateData)>,
 }
 
 #[derive(Clone, Debug, Copy, PartialEq)]
@@ -96,7 +115,11 @@ impl SyncStateMachine {
         sync_id: &str,
         transition: SyncStateTransition,
     ) -> Result<(), CommunicationError> {
-        let current = self.states.get(sync_id).copied().unwrap_or(SyncState::Idle);
+        let current = self
+            .states
+            .get(sync_id)
+            .map(|(s, _)| *s)
+            .unwrap_or(SyncState::Idle);
 
         let next = match (current, transition) {
             (SyncState::Idle, SyncStateTransition::RequestInitiated) => SyncState::Initiated,
@@ -126,19 +149,39 @@ impl SyncStateMachine {
             }
         };
 
-        self.states.insert(sync_id.to_string(), next);
+        if let Some(entry) = self.states.get_mut(sync_id) {
+            entry.0 = next;
+            entry.1.last_activity = Utc::now();
+        } else {
+            self.states
+                .insert(sync_id.to_string(), (next, SyncStateData::default()));
+        }
         Ok(())
     }
 
     pub fn get_status(&self, sync_id: &str) -> Option<SyncStatusInfo> {
-        self.states.get(sync_id).map(|state| SyncStatusInfo {
+        self.states.get(sync_id).map(|(state, data)| SyncStatusInfo {
             sync_id: sync_id.to_string(),
             status: state.to_status(),
-            direction: SyncDirection::Outbound,
-            progress: None,
-            last_activity: Some(Utc::now()),
-            errors: Vec::new(),
+            direction: data.direction.clone(),
+            progress: data.progress.clone(),
+            last_activity: Some(data.last_activity),
+            errors: data.errors.clone(),
         })
+    }
+
+    pub fn update_progress(&mut self, sync_id: &str, progress: SyncProgress) {
+        if let Some(entry) = self.states.get_mut(sync_id) {
+            entry.1.progress = Some(progress);
+            entry.1.last_activity = Utc::now();
+        }
+    }
+
+    pub fn record_error(&mut self, sync_id: &str, error: SyncError) {
+        if let Some(entry) = self.states.get_mut(sync_id) {
+            entry.1.errors.push(error);
+            entry.1.last_activity = Utc::now();
+        }
     }
 }
 
@@ -153,30 +196,30 @@ mod tests {
 
         sm.transition(sync_id, SyncStateTransition::RequestInitiated)
             .unwrap();
-        assert_eq!(sm.states.get(sync_id), Some(&SyncState::Initiated));
+        assert_eq!(sm.states.get(sync_id).map(|(s, _)| s), Some(&SyncState::Initiated));
 
         sm.transition(sync_id, SyncStateTransition::ResponseReceived)
             .unwrap();
-        assert_eq!(sm.states.get(sync_id), Some(&SyncState::AwaitingResponse));
+        assert_eq!(sm.states.get(sync_id).map(|(s, _)| s), Some(&SyncState::AwaitingResponse));
 
         sm.transition(sync_id, SyncStateTransition::SnapshotConstructed)
             .unwrap();
-        assert_eq!(sm.states.get(sync_id), Some(&SyncState::Constructing));
+        assert_eq!(sm.states.get(sync_id).map(|(s, _)| s), Some(&SyncState::Constructing));
 
         sm.transition(sync_id, SyncStateTransition::SnapshotTransmitted)
             .unwrap();
-        assert_eq!(sm.states.get(sync_id), Some(&SyncState::Transmitting));
+        assert_eq!(sm.states.get(sync_id).map(|(s, _)| s), Some(&SyncState::Transmitting));
 
         sm.transition(sync_id, SyncStateTransition::VerificationCompleted)
             .unwrap();
         assert_eq!(
-            sm.states.get(sync_id),
+            sm.states.get(sync_id).map(|(s, _)| s),
             Some(&SyncState::AwaitingVerification)
         );
 
         sm.transition(sync_id, SyncStateTransition::Completed)
             .unwrap();
-        assert_eq!(sm.states.get(sync_id), Some(&SyncState::Completed));
+        assert_eq!(sm.states.get(sync_id).map(|(s, _)| s), Some(&SyncState::Completed));
     }
 
     #[test]
@@ -204,12 +247,12 @@ mod tests {
         sm.transition(sync_id, SyncStateTransition::RequestInitiated)
             .unwrap();
         sm.transition(sync_id, SyncStateTransition::Failed).unwrap();
-        assert_eq!(sm.states.get(sync_id), Some(&SyncState::Failed));
+        assert_eq!(sm.states.get(sync_id).map(|(s, _)| s), Some(&SyncState::Failed));
 
         let sync_id2 = "test-sync-4";
         sm.transition(sync_id2, SyncStateTransition::Failed)
             .unwrap();
-        assert_eq!(sm.states.get(sync_id2), Some(&SyncState::Failed));
+        assert_eq!(sm.states.get(sync_id2).map(|(s, _)| s), Some(&SyncState::Failed));
     }
 
     #[test]
