@@ -703,10 +703,11 @@ pub struct DerivationStep {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DerivationResult {
-    pub attribute: String,
-    pub derived_value: serde_json::Value,
+    pub derived_node_id: BeliefId,
+    pub derived_attributes: HashMap<String, AttributeValue>,
     pub confidence: f64,
     pub derivation_path: Vec<DerivationStep>,
+    pub derivation_rule: String,
 }
 
 /// 快照元数据结构体
