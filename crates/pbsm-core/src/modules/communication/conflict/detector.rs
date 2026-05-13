@@ -139,9 +139,123 @@ impl ConflictDetector {
     }
 
     pub fn detect_conflicts_in_snapshot(
-        _snapshot: &CommunicationSnapshot,
+        snapshot: &CommunicationSnapshot,
     ) -> Result<Vec<Conflict>, CommunicationError> {
-        Ok(Vec::new())
+        let mut conflicts = Vec::new();
+
+        let mut groups: HashMap<String, Vec<&EntityBelief>> = HashMap::new();
+        for belief in &snapshot.entity_beliefs {
+            groups
+                .entry(belief.node_id.clone())
+                .or_default()
+                .push(belief);
+        }
+
+        for beliefs in groups.values() {
+            if beliefs.len() < 2 {
+                continue;
+            }
+            for i in 0..beliefs.len() {
+                for j in (i + 1)..beliefs.len() {
+                    if let Some(conflict) = Self::detect_conflicts(beliefs[i], beliefs[j])? {
+                        conflicts.push(conflict);
+                    }
+                }
+            }
+        }
+
+        let mut relation_groups: HashMap<(String, String), Vec<&RelationBelief>> = HashMap::new();
+        for relation in &snapshot.relation_beliefs {
+            let key = (
+                relation.source_entity.node_id.clone(),
+                relation.target_entity.node_id.clone(),
+            );
+            relation_groups.entry(key).or_default().push(relation);
+        }
+
+        for relations in relation_groups.values() {
+            if relations.len() < 2 {
+                continue;
+            }
+            for i in 0..relations.len() {
+                for j in (i + 1)..relations.len() {
+                    let a = relations[i];
+                    let b = relations[j];
+                    let edge_mismatch = a.edge_type != b.edge_type;
+                    let confidence_diff = (a.confidence - b.confidence).abs();
+                    let confidence_conflict = confidence_diff > CONFIDENCE_DIFF_THRESHOLD;
+
+                    if edge_mismatch || confidence_conflict {
+                        let deviation_metric = if edge_mismatch {
+                            1.0
+                        } else {
+                            confidence_diff
+                        };
+                        let impact = Self::assess_impact(deviation_metric);
+
+                        let local_belief = BeliefState {
+                            node_id: format!(
+                                "{}->{}",
+                                a.source_entity.node_id, a.target_entity.node_id
+                            ),
+                            attributes: a.attributes.clone().unwrap_or_default(),
+                            confidence: a.confidence,
+                            source: None,
+                            last_updated: None,
+                        };
+
+                        let remote_belief = BeliefState {
+                            node_id: format!(
+                                "{}->{}",
+                                b.source_entity.node_id, b.target_entity.node_id
+                            ),
+                            attributes: b.attributes.clone().unwrap_or_default(),
+                            confidence: b.confidence,
+                            source: None,
+                            last_updated: None,
+                        };
+
+                        conflicts.push(Conflict {
+                            conflict_id: Uuid::new_v4().to_string(),
+                            conflict_type: ConflictType::RelationMismatch,
+                            affected_entities: vec![AffectedEntity {
+                                local_belief,
+                                remote_belief,
+                            }],
+                            divergence: Divergence {
+                                attribute_name: if edge_mismatch {
+                                    "edge_type".to_string()
+                                } else {
+                                    "confidence".to_string()
+                                },
+                                local_value: if edge_mismatch {
+                                    serde_json::json!(format!("{:?}", a.edge_type))
+                                } else {
+                                    serde_json::json!(a.confidence)
+                                },
+                                remote_value: if edge_mismatch {
+                                    serde_json::json!(format!("{:?}", b.edge_type))
+                                } else {
+                                    serde_json::json!(b.confidence)
+                                },
+                                deviation_metric,
+                            },
+                            context: ConflictContext {
+                                scope: format!(
+                                    "relation:{}->{}",
+                                    a.source_entity.node_id, a.target_entity.node_id
+                                ),
+                                intent_relevance: 1.0 - deviation_metric,
+                                impact_assessment: impact,
+                            },
+                            detected_at: Utc::now(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(conflicts)
     }
 
     fn assess_impact(confidence_diff: f64) -> ImpactAssessment {

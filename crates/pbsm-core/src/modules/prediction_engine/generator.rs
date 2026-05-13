@@ -17,6 +17,8 @@
 //! 4. **输出阶段**：组装完整的预测结构体
 
 use chrono::Utc;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -170,9 +172,28 @@ impl PredictionGenerator {
             }
         }
 
+        let mut sorted_nodes = relevant_nodes.clone();
+        sorted_nodes.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+
+        let mut hasher = DefaultHasher::new();
+        for node in &sorted_nodes {
+            node.node_id.hash(&mut hasher);
+            node.node_type.hash(&mut hasher);
+            node.confidence.to_bits().hash(&mut hasher);
+            if let Some(obj) = node.attributes.as_object() {
+                let mut keys: Vec<&String> = obj.keys().collect();
+                keys.sort();
+                for key in keys {
+                    key.hash(&mut hasher);
+                    obj[key].to_string().hash(&mut hasher);
+                }
+            }
+        }
+        let belief_state_hash = format!("{:016x}", hasher.finish());
+
         Ok(ContextRetrievalResult {
             target_beliefs: relevant_nodes,
-            belief_state_hash: format!("hash_{}", Uuid::new_v4()),
+            belief_state_hash,
         })
     }
 
