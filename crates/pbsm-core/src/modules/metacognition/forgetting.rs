@@ -9,13 +9,14 @@ use super::error::Result;
 use super::events::{MetacognitiveEvent, MetacognitiveEventPublisher};
 use super::types::{
     ArchiveResult, DeferredForget, ForceForgetRequest, ForceForgetResponse, ForgetCandidate,
-    ForgetReason, ForgetStatistics, GetForgetStatusResponse, RecentForget,
+    ForgetReason, ForgetStatistics, GetForgetStatusResponse, PendingForget, RecentForget,
 };
 
 pub struct ForgettingExecutor {
     config: ForgettingConfig,
     deferred_forgets: RwLock<HashMap<String, DeferredForgetEntry>>,
     recent_forgets: RwLock<Vec<RecentForget>>,
+    recent_value_scores: RwLock<Vec<f64>>,
     total_forgotten_session: RwLock<usize>,
     belief_ages: RwLock<HashMap<String, usize>>,
     protected_beliefs: RwLock<Vec<String>>,
@@ -40,6 +41,7 @@ impl ForgettingExecutor {
             config,
             deferred_forgets: RwLock::new(HashMap::new()),
             recent_forgets: RwLock::new(Vec::new()),
+            recent_value_scores: RwLock::new(Vec::new()),
             total_forgotten_session: RwLock::new(0),
             belief_ages: RwLock::new(HashMap::new()),
             protected_beliefs: RwLock::new(Vec::new()),
@@ -138,7 +140,7 @@ impl ForgettingExecutor {
                 continue;
             }
 
-            match self.archive_and_remove(&candidate.node_id) {
+            match self.archive_and_remove(&candidate.node_id, candidate.value_score) {
                 Ok(location) => {
                     forgotten_ids.push(candidate.node_id.clone());
                     archive_results.push(ArchiveResult {
@@ -178,7 +180,7 @@ impl ForgettingExecutor {
         })
     }
 
-    fn archive_and_remove(&self, node_id: &str) -> Result<String> {
+    fn archive_and_remove(&self, node_id: &str, value_score: f64) -> Result<String> {
         let archive_id = Uuid::new_v4().to_string();
         let location = format!("archive/{}", archive_id);
 
@@ -187,6 +189,8 @@ impl ForgettingExecutor {
             archived_at: Utc::now(),
             reason: "LOW_VALUE".to_string(),
         });
+
+        self.recent_value_scores.write().push(value_score);
 
         *self.total_forgotten_session.write() += 1;
 
@@ -230,6 +234,7 @@ impl ForgettingExecutor {
         let deferred = self.deferred_forgets.read();
         let recent = self.recent_forgets.read();
         let total_session = *self.total_forgotten_session.read();
+        let value_scores = self.recent_value_scores.read();
 
         let deferred_forgets: Vec<DeferredForget> = deferred
             .values()
@@ -240,10 +245,24 @@ impl ForgettingExecutor {
             })
             .collect();
 
-        let avg_score = if recent.is_empty() { 0.0 } else { 0.1 };
+        let avg_score = if value_scores.is_empty() {
+            0.0
+        } else {
+            value_scores.iter().sum::<f64>() / value_scores.len() as f64
+        };
+
+        let pending_forgets: Vec<PendingForget> = deferred
+            .values()
+            .filter(|e| (e.defer_steps as f64) >= self.config.max_defer_steps as f64 * 0.8)
+            .map(|e| PendingForget {
+                node_id: e.node_id.clone(),
+                reason: e.defer_reason.clone(),
+                queued_at: Utc::now(),
+            })
+            .collect();
 
         GetForgetStatusResponse {
-            pending_forgets: Vec::new(),
+            pending_forgets,
             deferred_forgets,
             recent_forgets: recent.clone(),
             statistics: ForgetStatistics {

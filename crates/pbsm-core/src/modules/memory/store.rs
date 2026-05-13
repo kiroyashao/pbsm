@@ -18,7 +18,6 @@ use crate::modules::memory::storage::transaction::TransactionManager;
 use crate::modules::memory::types::*;
 use std::sync::Arc;
 
-#[allow(dead_code)]
 pub struct ExternalMemoryStore {
     sqlite: Arc<SqliteStorage>,
     sled: Arc<SledKvStore>,

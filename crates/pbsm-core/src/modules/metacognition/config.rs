@@ -36,6 +36,7 @@ pub struct ValueEvaluationConfig {
     pub recency_decay_lambda: f64,
     pub access_window_size: usize,
     pub max_access_threshold: usize,
+    pub forget_threshold: f64,
 }
 
 impl Default for ValueEvaluationConfig {
@@ -45,6 +46,7 @@ impl Default for ValueEvaluationConfig {
             recency_decay_lambda: 0.05,
             access_window_size: 50,
             max_access_threshold: 10,
+            forget_threshold: 0.2,
         }
     }
 }

@@ -52,13 +52,13 @@ impl ValueEvaluator {
         };
 
         let weights = self.weight_config.read().clone();
-        let _forget_threshold = self.config.weights.goal_relevance_weight;
+        let forget_threshold = self.config.forget_threshold;
 
         let mut results = Vec::new();
 
         for node_id in &node_ids {
             let evaluation = self.compute_value_score(node_id, &weights).await?;
-            let forget_recommendation = evaluation.score < 0.2;
+            let forget_recommendation = evaluation.score < forget_threshold;
 
             let factors = evaluation.factors.clone();
             let result = MemoryValueResult {
@@ -84,7 +84,7 @@ impl ValueEvaluator {
             results.push(result);
         }
 
-        let statistics = compute_statistics(&results, 0.2);
+        let statistics = compute_statistics(&results, forget_threshold);
 
         Ok(EvaluateMemoryValueResponse {
             value_scores: results,
