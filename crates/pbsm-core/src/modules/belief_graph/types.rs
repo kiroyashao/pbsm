@@ -152,6 +152,7 @@ impl AttributeValue {
         source: String,
         source_type: SourceType,
     ) -> Self {
+        let confidence = confidence.clamp(0.0, 1.0);
         Self {
             value,
             confidence,
@@ -395,6 +396,7 @@ impl RelationEdge {
         target_node: BeliefId,
         confidence: f64,
     ) -> Self {
+        let confidence = confidence.clamp(0.0, 1.0);
         Self {
             edge_id: Uuid::new_v4(),
             edge_type,
