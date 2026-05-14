@@ -613,6 +613,10 @@ impl BeliefGraph {
         self.snapshots.read().clone()
     }
 
+    pub fn snapshots(&self) -> parking_lot::RwLockReadGuard<'_, Vec<GraphSnapshot>> {
+        self.snapshots.read()
+    }
+
     /// 添加快照到历史
     ///
     /// # 参数
