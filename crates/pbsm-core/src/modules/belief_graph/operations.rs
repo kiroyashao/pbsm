@@ -90,16 +90,7 @@ impl BeliefGraphOperations {
 
         let mut node = BeliefNode::new(node_type, name.clone(), source.clone(), source_type);
 
-        if let Some(initial_conf) = initial_confidence {
-            let attr_value = AttributeValue::new(
-                serde_json::json!(null),
-                initial_conf,
-                source.clone(),
-                source_type,
-            );
-            node.attributes
-                .insert("_initial_confidence".to_string(), attr_value);
-        }
+        let default_conf = initial_confidence.unwrap_or(graph.config().default_confidence);
 
         for (key, value) in attributes {
             if node.attributes.len() >= 50 {
@@ -107,7 +98,11 @@ impl BeliefGraphOperations {
                     "Maximum 50 attributes per node".to_string(),
                 ));
             }
-            node.attributes.insert(key, value);
+            let mut attr = value;
+            if attr.confidence == 0.0 {
+                attr.confidence = default_conf;
+            }
+            node.attributes.insert(key, attr);
         }
 
         if let Some(t) = tags {
