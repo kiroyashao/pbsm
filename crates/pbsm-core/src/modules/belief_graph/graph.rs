@@ -350,15 +350,19 @@ impl GraphIndexes {
         max: Option<f64>,
     ) -> HashSet<BeliefId> {
         let mut result = HashSet::new();
-        if min.map(|m| m <= 0.7).unwrap_or(true) || max.map(|m| m < 0.7).unwrap_or(false) {
+        let min_v = min.unwrap_or(0.0);
+        let max_v = max.unwrap_or(1.0);
+
+        if min_v < 0.4 && max_v > 0.0 {
             result.extend(&self.confidence_index.low);
         }
-        if min.map(|m| m <= 0.4).unwrap_or(true) && max.map(|m| m >= 0.4).unwrap_or(true) {
+        if min_v < 0.7 && max_v >= 0.4 {
             result.extend(&self.confidence_index.medium);
         }
-        if max.map(|m| m >= 0.7).unwrap_or(true) {
+        if max_v >= 0.7 {
             result.extend(&self.confidence_index.high);
         }
+
         result
     }
 
