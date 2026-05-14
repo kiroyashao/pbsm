@@ -300,12 +300,17 @@ impl BeliefNode {
 /// | Calls | 调用关系 | source调用target |
 /// | Contains | 包含关系 | source包含target |
 /// | RelatedTo | 关联关系 | source与target相关 |
+/// | PartOf | 部分属于 | source是target的一部分 |
+/// | LocatedIn | 位于关系 | source位于target中 |
 /// | Enables | 启用关系 | source启用target |
 /// | Blocks | 阻塞关系 | source阻塞target |
 /// | Modifies | 修改关系 | source修改target |
 /// | References | 引用关系 | source引用target |
-/// | Precedes | 前置关系 | source在target之前 |
-/// | Follows | 后续关系 | source在target之后 |
+/// | Causes | 因果关系 | source导致target发生 |
+/// | Implies | 蕴含关系 | source蕴含target |
+/// | TemporalBefore | 时序先于 | source在target之前 |
+/// | TemporalAfter | 时序后于 | source在target之后 |
+/// | DelegatesTo | 委派关系 | source委派任务给target |
 /// | SynchronizesWith | 同步关系 | source与target同步 |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -316,12 +321,17 @@ pub enum RelationEdgeType {
     Calls,
     Contains,
     RelatedTo,
+    PartOf,
+    LocatedIn,
     Enables,
     Blocks,
     Modifies,
     References,
-    Precedes,
-    Follows,
+    Causes,
+    Implies,
+    TemporalBefore,
+    TemporalAfter,
+    DelegatesTo,
     SynchronizesWith,
 }
 

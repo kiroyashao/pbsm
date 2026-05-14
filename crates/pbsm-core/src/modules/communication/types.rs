@@ -549,8 +549,13 @@ pub fn comm_edge_type_from_relation(relation_type: RelationEdgeType) -> Option<C
         | RelationEdgeType::Blocks
         | RelationEdgeType::Modifies
         | RelationEdgeType::References
-        | RelationEdgeType::Precedes
-        | RelationEdgeType::Follows => None,
+        | RelationEdgeType::PartOf
+        | RelationEdgeType::LocatedIn
+        | RelationEdgeType::Causes
+        | RelationEdgeType::Implies
+        | RelationEdgeType::TemporalBefore
+        | RelationEdgeType::TemporalAfter
+        | RelationEdgeType::DelegatesTo => None,
     }
 }
 
@@ -750,11 +755,11 @@ mod tests {
             None
         );
         assert_eq!(
-            comm_edge_type_from_relation(RelationEdgeType::Precedes),
+            comm_edge_type_from_relation(RelationEdgeType::TemporalBefore),
             None
         );
         assert_eq!(
-            comm_edge_type_from_relation(RelationEdgeType::Follows),
+            comm_edge_type_from_relation(RelationEdgeType::TemporalAfter),
             None
         );
     }

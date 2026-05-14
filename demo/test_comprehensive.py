@@ -112,8 +112,8 @@ class TestBeliefGraphEdge:
         b2 = _j(orch.create_belief("File", "tgt"))
         edge_types = [
             "Owns", "DependsOn", "Authorizes", "Calls", "Contains",
-            "RelatedTo", "Enables", "Blocks", "Modifies", "References",
-            "Precedes", "Follows", "SynchronizesWith",
+            "RelatedTo", "PartOf", "LocatedIn", "Enables", "Blocks", "Modifies", "References",
+            "Causes", "Implies", "TemporalBefore", "TemporalAfter", "DelegatesTo", "SynchronizesWith",
         ]
         for et in edge_types:
             r = _j(orch.create_edge(et, b1["belief_id"], b2["belief_id"], 0.8))
