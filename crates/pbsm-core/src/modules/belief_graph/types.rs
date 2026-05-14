@@ -74,7 +74,7 @@ pub enum BeliefNodeType {
 /// | UserInput | 0.7 | 用户显式提供的信息 |
 /// | Derived | 0.5 | 从其他信念推导得出 |
 /// | MemoryRestore | 0.6 | 从外部记忆恢复 |
-/// | AgentSync | 0.65 | 从其他Agent同步 |
+/// | AgentSync | 0.6 | 从其他Agent同步 |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SourceType {
@@ -95,7 +95,7 @@ impl SourceType {
             SourceType::UserInput => 0.7,
             SourceType::Derived => 0.5,
             SourceType::MemoryRestore => 0.6,
-            SourceType::AgentSync => 0.65,
+            SourceType::AgentSync => 0.6,
         }
     }
 }
@@ -878,7 +878,7 @@ mod tests {
         assert_eq!(SourceType::UserInput.default_confidence(), 0.7);
         assert_eq!(SourceType::Derived.default_confidence(), 0.5);
         assert_eq!(SourceType::MemoryRestore.default_confidence(), 0.6);
-        assert_eq!(SourceType::AgentSync.default_confidence(), 0.65);
+        assert_eq!(SourceType::AgentSync.default_confidence(), 0.6);
     }
 
     #[test]
