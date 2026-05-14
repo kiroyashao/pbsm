@@ -217,12 +217,8 @@ impl BeliefGraphOperations {
             UpdateStrategy::AverageBlend => {
                 for (key, value) in updates {
                     if let Some(existing) = node.attributes.get_mut(&key) {
-                        let total_conf = existing.confidence + value.confidence;
-                        if total_conf > 0.0 {
-                            existing.confidence = (existing.confidence * existing.confidence
-                                + value.confidence * value.confidence)
-                                / total_conf;
-                        }
+                        existing.confidence =
+                            (existing.confidence + value.confidence) / 2.0;
                         existing.last_updated = chrono::Utc::now();
                     } else {
                         node.attributes.insert(key, value);
