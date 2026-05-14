@@ -622,7 +622,12 @@ impl BeliefGraph {
     /// # 参数
     /// * `snapshot` - 图快照
     pub fn add_snapshot(&self, snapshot: GraphSnapshot) {
-        self.snapshots.write().push(snapshot);
+        let mut snapshots = self.snapshots.write();
+        snapshots.push(snapshot);
+        let max = self.config.max_snapshots;
+        while snapshots.len() > max {
+            snapshots.remove(0);
+        }
     }
 
     /// 根据ID获取快照
