@@ -787,6 +787,57 @@ impl BeliefGraphReader for BeliefGraph {
     }
 }
 
+#[async_trait]
+impl BeliefGraphWriter for BeliefGraph {
+    async fn update_belief_confidence(
+        &self,
+        node_id: &str,
+        attribute: &str,
+        new_confidence: f64,
+    ) -> Result<(), BeliefGraphError> {
+        let uuid = uuid::Uuid::parse_str(node_id).map_err(|e| {
+            BeliefGraphError::NodeNotFound(format!("Invalid UUID {}: {}", node_id, e))
+        })?;
+        let mut nodes = self.nodes.write();
+        let node = nodes
+            .get_mut(&uuid)
+            .ok_or_else(|| BeliefGraphError::NodeNotFound(node_id.to_string()))?;
+        if let Some(attr) = node.attributes.get_mut(attribute) {
+            let old_confidence = attr.confidence;
+            attr.confidence = new_confidence;
+            attr.last_updated = chrono::Utc::now();
+            drop(nodes);
+            let mut indexes = self.indexes.write();
+            indexes.update_confidence(uuid, old_confidence, new_confidence);
+            Ok(())
+        } else {
+            Err(BeliefGraphError::NodeNotFound(format!(
+                "Attribute '{}' not found on node {}",
+                attribute, node_id
+            )))
+        }
+    }
+
+    async fn mark_belief_for_revision(
+        &self,
+        belief_id: &str,
+        reason: &str,
+    ) -> Result<(), BeliefGraphError> {
+        let uuid = uuid::Uuid::parse_str(belief_id).map_err(|e| {
+            BeliefGraphError::NodeNotFound(format!("Invalid UUID {}: {}", belief_id, e))
+        })?;
+        let mut nodes = self.nodes.write();
+        let node = nodes
+            .get_mut(&uuid)
+            .ok_or_else(|| BeliefGraphError::NodeNotFound(belief_id.to_string()))?;
+        node.metadata.importance = ImportanceLevel::High;
+        node.metadata.last_modified = chrono::Utc::now();
+        node.metadata.version += 1;
+        let _ = reason;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
