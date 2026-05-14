@@ -176,6 +176,12 @@ impl FusionOperations {
             }
         }
 
+        graph.publish_event(crate::modules::common::BeliefGraphEvent::FusionCompleted {
+            snapshot_id: "external".to_string(),
+            merged_count: stats.nodes_updated,
+            conflict_count: stats.conflicts_resolved + stats.conflicts_deferred,
+        });
+
         Ok(FusionResult {
             success: true,
             statistics: Some(stats),

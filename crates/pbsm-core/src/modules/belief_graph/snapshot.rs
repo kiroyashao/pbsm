@@ -109,6 +109,11 @@ impl SnapshotOperations {
 
         graph.add_snapshot(snapshot);
 
+        graph.publish_event(crate::modules::common::BeliefGraphEvent::SnapshotCreated {
+            snapshot_id: snapshot_id.to_string(),
+            version,
+        });
+
         Ok(snapshot_id)
     }
 
@@ -230,6 +235,11 @@ impl SnapshotOperations {
             SnapshotType::Manual,
             Some("Post-rollback state".to_string()),
         )?;
+
+        graph.publish_event(crate::modules::common::BeliefGraphEvent::RollbackCompleted {
+            snapshot_id: snapshot_id.to_string(),
+            target_version: metadata.version_number,
+        });
 
         Ok(RollbackResult {
             success: true,

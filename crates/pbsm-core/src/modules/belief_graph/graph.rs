@@ -411,6 +411,7 @@ pub struct BeliefGraph {
     snapshots: RwLock<Vec<GraphSnapshot>>,
     config: GraphConfig,
     version: RwLock<u64>,
+    event_publisher: Option<Arc<dyn crate::modules::common::BeliefGraphEventPublisher>>,
 }
 
 impl BeliefGraph {
@@ -427,7 +428,34 @@ impl BeliefGraph {
             snapshots: RwLock::new(Vec::new()),
             config,
             version: RwLock::new(0),
+            event_publisher: None,
         }
+    }
+
+    pub fn with_event_publisher(
+        config: GraphConfig,
+        publisher: Arc<dyn crate::modules::common::BeliefGraphEventPublisher>,
+    ) -> Self {
+        Self {
+            nodes: RwLock::new(HashMap::new()),
+            edges: RwLock::new(HashMap::new()),
+            adjacency: RwLock::new(AdjacencyList::new()),
+            indexes: RwLock::new(GraphIndexes::new()),
+            snapshots: RwLock::new(Vec::new()),
+            config,
+            version: RwLock::new(0),
+            event_publisher: Some(publisher),
+        }
+    }
+
+    fn emit_event(&self, event: crate::modules::common::BeliefGraphEvent) {
+        if let Some(ref publisher) = self.event_publisher {
+            let _ = publisher.publish(event);
+        }
+    }
+
+    pub fn publish_event(&self, event: crate::modules::common::BeliefGraphEvent) {
+        self.emit_event(event);
     }
 
     /// 使用默认配置创建信念图

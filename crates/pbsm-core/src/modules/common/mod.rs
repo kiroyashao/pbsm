@@ -342,3 +342,31 @@ impl EventPublisher for NullEventPublisher {
         Ok(())
     }
 }
+
+impl BeliefGraphEventPublisher for NullEventPublisher {
+    fn publish(&self, _event: BeliefGraphEvent) -> Result<(), EventPublishError> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum BeliefGraphEvent {
+    BeliefCreated { node_id: String, node_type: String, source: String },
+    BeliefUpdated { node_id: String, update_type: String, old_confidence: f64, new_confidence: f64 },
+    BeliefDeleted { node_id: String, cascade: bool },
+    EdgeCreated { edge_id: String, source_node: String, target_node: String, edge_type: String },
+    EdgeDeleted { edge_id: String, source_node: String, target_node: String },
+    SnapshotCreated { snapshot_id: String, version: u64 },
+    RollbackCompleted { snapshot_id: String, target_version: u64 },
+    FusionCompleted { snapshot_id: String, merged_count: usize, conflict_count: usize },
+    ConflictDetected { node_id: String, local_confidence: f64, external_confidence: f64, strategy: String },
+    CapacityWarning { current_nodes: usize, max_nodes: usize },
+    BeliefDerived { source_id: String, derived_id: String, confidence: f64 },
+    GraphTraversed { start_node: String, visited_count: usize },
+    AuditBeliefModified { node_id: String, modifier: String, change_description: String },
+    AuditRollbackExecuted { snapshot_id: String, operator: String },
+}
+
+pub trait BeliefGraphEventPublisher: Send + Sync {
+    fn publish(&self, event: BeliefGraphEvent) -> Result<(), EventPublishError>;
+}

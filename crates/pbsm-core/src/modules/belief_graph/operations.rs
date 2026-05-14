@@ -130,6 +130,12 @@ impl BeliefGraphOperations {
         let mut version = graph.version_mut().write();
         *version += 1;
 
+        graph.publish_event(crate::modules::common::BeliefGraphEvent::BeliefCreated {
+            node_id: node_id.to_string(),
+            node_type: format!("{:?}", node_type),
+            source: source.clone(),
+        });
+
         Ok(node_id)
     }
 
@@ -239,6 +245,13 @@ impl BeliefGraphOperations {
         let mut version = graph.version_mut().write();
         *version += 1;
 
+        graph.publish_event(crate::modules::common::BeliefGraphEvent::BeliefUpdated {
+            node_id: node_id.to_string(),
+            update_type: format!("{:?}", strategy),
+            old_confidence,
+            new_confidence,
+        });
+
         Ok(UpdateResult {
             success: true,
             updated: true,
@@ -305,6 +318,11 @@ impl BeliefGraphOperations {
 
         let mut version = graph.version_mut().write();
         *version += 1;
+
+        graph.publish_event(crate::modules::common::BeliefGraphEvent::BeliefDeleted {
+            node_id: node_id.to_string(),
+            cascade,
+        });
 
         Ok(DeleteResult {
             success: true,
@@ -670,6 +688,13 @@ impl BeliefGraphOperations {
         let mut version = graph.version_mut().write();
         *version += 1;
 
+        graph.publish_event(crate::modules::common::BeliefGraphEvent::EdgeCreated {
+            edge_id: edge_id.to_string(),
+            source_node: source_node.to_string(),
+            target_node: target_node.to_string(),
+            edge_type: format!("{:?}", edge_type),
+        });
+
         Ok(edge_id)
     }
 
@@ -705,6 +730,12 @@ impl BeliefGraphOperations {
 
         let mut version = graph.version_mut().write();
         *version += 1;
+
+        graph.publish_event(crate::modules::common::BeliefGraphEvent::EdgeDeleted {
+            edge_id: edge_id.to_string(),
+            source_node: edge.source_node.to_string(),
+            target_node: edge.target_node.to_string(),
+        });
 
         Ok(edge_id)
     }
