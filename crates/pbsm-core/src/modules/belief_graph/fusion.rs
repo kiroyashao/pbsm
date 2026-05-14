@@ -114,11 +114,12 @@ impl FusionOperations {
                         );
                     }
 
+                    let update_strategy = Self::resolution_to_update_strategy(strategy);
                     let _ = BeliefGraphOperations::update_belief(
                         graph,
                         local_node.node_id,
                         updates,
-                        UpdateStrategy::ConditionalReplace,
+                        update_strategy,
                     );
                 }
 
@@ -312,6 +313,16 @@ impl FusionOperations {
             SourceType::MemoryRestore => 0.7,
             SourceType::AgentSync => 0.6,
             SourceType::Derived => 0.5,
+        }
+    }
+
+    fn resolution_to_update_strategy(resolution: ResolutionStrategy) -> UpdateStrategy {
+        match resolution {
+            ResolutionStrategy::HighConfidenceWins => UpdateStrategy::ConservativeMerge,
+            ResolutionStrategy::SourcePriority => UpdateStrategy::ConservativeMerge,
+            ResolutionStrategy::MostRecent => UpdateStrategy::Overwrite,
+            ResolutionStrategy::TimeDecay => UpdateStrategy::IncrementalMerge,
+            ResolutionStrategy::ManualReview => UpdateStrategy::ConditionalReplace,
         }
     }
 }
