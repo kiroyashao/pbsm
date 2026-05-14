@@ -178,6 +178,26 @@ impl SnapshotOperations {
         snapshot_id: SnapshotId,
         reason: String,
     ) -> Result<RollbackResult> {
+        let max_depth = graph.config().max_rollback_depth;
+        let snapshots = graph.snapshots();
+        let snapshot_pos = snapshots
+            .iter()
+            .position(|s| s.metadata.snapshot_id == snapshot_id);
+        if let Some(pos) = snapshot_pos {
+            let current_count = snapshots.len();
+            if current_count.saturating_sub(pos) > max_depth {
+                drop(snapshots);
+                return Err(BeliefGraphError::RollbackFailed(
+                    format!(
+                        "Rollback depth {} exceeds max_rollback_depth {}",
+                        current_count.saturating_sub(pos),
+                        max_depth
+                    ),
+                ));
+            }
+        }
+        drop(snapshots);
+
         let snapshot = graph
             .get_snapshot(snapshot_id)
             .ok_or_else(|| BeliefGraphError::SnapshotNotFound(snapshot_id.to_string()))?;
