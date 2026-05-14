@@ -123,18 +123,23 @@ impl AdjacencyList {
     /// * `node_id` - 节点ID
     pub fn remove_node(&mut self, node_id: BeliefId) {
         if let Some(outgoing) = self.outgoing.remove(&node_id) {
+            let edge_ids_to_remove: HashSet<EdgeId> =
+                outgoing.iter().map(|(eid, _)| *eid).collect();
             for (_, target) in outgoing {
                 if let Some(incoming) = self.incoming.get_mut(&target) {
-                    incoming.retain(|(eid, _)| {
-                        self.outgoing
-                            .get(&node_id)
-                            .map(|edges| !edges.iter().any(|(e, _)| e == eid))
-                            .unwrap_or(true)
-                    });
+                    incoming.retain(|(eid, _)| !edge_ids_to_remove.contains(eid));
                 }
             }
         }
-        self.incoming.remove(&node_id);
+        if let Some(incoming) = self.incoming.remove(&node_id) {
+            let edge_ids_to_remove: HashSet<EdgeId> =
+                incoming.iter().map(|(eid, _)| *eid).collect();
+            for (_, source) in incoming {
+                if let Some(outgoing) = self.outgoing.get_mut(&source) {
+                    outgoing.retain(|(eid, _)| !edge_ids_to_remove.contains(eid));
+                }
+            }
+        }
     }
 
     /// 清空邻接表
