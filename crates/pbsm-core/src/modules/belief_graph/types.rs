@@ -660,6 +660,14 @@ pub struct GraphConfig {
     pub max_nodes: usize,
     pub max_edges: usize,
     pub default_confidence: f64,
+    #[serde(default)]
+    pub confidence_decay_rate: f64,
+    #[serde(default)]
+    pub auto_snapshot_enabled: bool,
+    #[serde(default)]
+    pub max_snapshots: usize,
+    #[serde(default)]
+    pub max_rollback_depth: usize,
 }
 
 impl Default for GraphConfig {
@@ -668,6 +676,10 @@ impl Default for GraphConfig {
             max_nodes: 500,
             max_edges: 2000,
             default_confidence: 0.5,
+            confidence_decay_rate: 0.01,
+            auto_snapshot_enabled: false,
+            max_snapshots: 100,
+            max_rollback_depth: 10,
         }
     }
 }
@@ -778,6 +790,28 @@ pub struct ConflictRecord {
     pub external_value: serde_json::Value,
     pub local_confidence: f64,
     pub external_confidence: f64,
+    pub severity: ConflictSeverity,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ConflictSeverity {
+    Low,
+    Medium,
+    High,
+}
+
+impl ConflictSeverity {
+    pub fn from_confidence_delta(local: f64, external: f64) -> Self {
+        let delta = (local - external).abs();
+        if delta >= 0.5 {
+            ConflictSeverity::High
+        } else if delta >= 0.2 {
+            ConflictSeverity::Medium
+        } else {
+            ConflictSeverity::Low
+        }
+    }
 }
 
 /// 融合结果结构体
@@ -968,5 +1002,9 @@ mod tests {
         assert_eq!(config.max_nodes, 500);
         assert_eq!(config.max_edges, 2000);
         assert_eq!(config.default_confidence, 0.5);
+        assert_eq!(config.confidence_decay_rate, 0.01);
+        assert!(!config.auto_snapshot_enabled);
+        assert_eq!(config.max_snapshots, 100);
+        assert_eq!(config.max_rollback_depth, 10);
     }
 }

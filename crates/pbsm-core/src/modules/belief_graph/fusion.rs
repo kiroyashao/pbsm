@@ -269,6 +269,10 @@ impl FusionOperations {
                                 external_value: external_attr.value.clone(),
                                 local_confidence: local_attr.confidence,
                                 external_confidence: external_attr.confidence,
+                                severity: ConflictSeverity::from_confidence_delta(
+                                    local_attr.confidence,
+                                    external_attr.confidence,
+                                ),
                             });
                             stats.deferred += 1;
                         }
