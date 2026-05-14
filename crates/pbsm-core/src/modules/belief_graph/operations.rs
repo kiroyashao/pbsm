@@ -307,6 +307,13 @@ impl BeliefGraphOperations {
                 }
             }
         } else {
+            if !node.outgoing_edges.is_empty() || !node.incoming_edges.is_empty() {
+                drop(edges);
+                drop(adjacency);
+                return Err(BeliefGraphError::ValidationError(
+                    "Cannot delete node with existing edges in non-cascade mode".to_string(),
+                ));
+            }
             adjacency.remove_node(node_id);
         }
 
