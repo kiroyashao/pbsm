@@ -362,8 +362,17 @@ impl GraphIndexes {
     /// # 参数
     /// * `hours` - 时间窗口（小时）
     pub fn query_recent(&self, hours: i64) -> Vec<BeliefId> {
-        let _cutoff = chrono::Utc::now() - chrono::Duration::hours(hours);
-        self.time_index.clone()
+        let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours);
+        self.time_index
+            .iter()
+            .filter(|id| {
+                self.time_stamps
+                    .get(id)
+                    .map(|t| *t >= cutoff)
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect()
     }
 
     /// 清空所有索引
