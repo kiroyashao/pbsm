@@ -26,6 +26,7 @@
 
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
@@ -167,6 +168,7 @@ pub struct GraphIndexes {
     pub name_index: HashMap<String, HashSet<BeliefId>>,
     pub confidence_index: ConfidenceIndex,
     pub time_index: Vec<BeliefId>,
+    pub time_stamps: HashMap<BeliefId, chrono::DateTime<chrono::Utc>>,
 }
 
 impl GraphIndexes {
@@ -178,6 +180,7 @@ impl GraphIndexes {
             name_index: HashMap::new(),
             confidence_index: ConfidenceIndex::default(),
             time_index: Vec::new(),
+            time_stamps: HashMap::new(),
         }
     }
 
@@ -221,6 +224,7 @@ impl GraphIndexes {
             ConfidenceLevel::Low => self.confidence_index.low.insert(node.node_id),
         };
 
+        self.time_stamps.insert(node.node_id, node.metadata.last_modified);
         self.time_index.push(node.node_id);
     }
 
@@ -248,6 +252,7 @@ impl GraphIndexes {
         self.confidence_index.medium.remove(&node.node_id);
         self.confidence_index.low.remove(&node.node_id);
 
+        self.time_stamps.remove(&node.node_id);
         self.time_index.retain(|id| *id != node.node_id);
     }
 
@@ -387,6 +392,7 @@ impl GraphIndexes {
         self.name_index.clear();
         self.confidence_index = ConfidenceIndex::default();
         self.time_index.clear();
+        self.time_stamps.clear();
     }
 }
 
