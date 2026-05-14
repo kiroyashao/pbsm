@@ -31,7 +31,7 @@ use async_trait::async_trait;
 
 use super::types::{BeliefId, BeliefNode, EdgeId, RelationEdge};
 use crate::modules::common::{
-    BeliefGraphError, BeliefGraphReader, BeliefQuerySpec, BeliefState as CommonBeliefState,
+    BeliefGraphError, BeliefGraphReader, BeliefGraphWriter, BeliefQuerySpec, BeliefState as CommonBeliefState,
 };
 
 use super::types::*;
@@ -650,6 +650,11 @@ fn convert_node(node: &BeliefNode) -> crate::modules::common::BeliefNode {
             .sum::<f64>()
             / node.attributes.len() as f64
     };
+    let attribute_confidences: std::collections::HashMap<String, f64> = node
+        .attributes
+        .iter()
+        .map(|(k, v)| (k.clone(), v.confidence))
+        .collect();
     crate::modules::common::BeliefNode {
         node_id: node.node_id.to_string(),
         node_type: format!("{:?}", node.node_type),
@@ -659,6 +664,7 @@ fn convert_node(node: &BeliefNode) -> crate::modules::common::BeliefNode {
             .map(|(k, v)| (k.clone(), v.value.clone()))
             .collect(),
         confidence,
+        attribute_confidences,
         created_at: node.metadata.created_at,
         updated_at: node.metadata.last_modified,
     }

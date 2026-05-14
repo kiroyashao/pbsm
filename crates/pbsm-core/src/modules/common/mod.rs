@@ -60,6 +60,7 @@ pub struct BeliefNode {
     pub node_type: String,
     pub attributes: Value,
     pub confidence: f64,
+    pub attribute_confidences: std::collections::HashMap<String, f64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -112,16 +113,30 @@ pub struct BeliefQuerySpec {
 #[derive(Debug, Clone)]
 pub enum BeliefGraphError {
     NodeNotFound(String),
+    EdgeNotFound(String),
+    ValidationError(String),
+    NodeExists(String),
+    EdgeExists(String),
+    CapacityExceeded { nodes: usize, edges: usize },
     QueryFailed(String),
     SerializationError(String),
+    InternalError(String),
 }
 
 impl std::fmt::Display for BeliefGraphError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BeliefGraphError::NodeNotFound(id) => write!(f, "Node not found: {}", id),
+            BeliefGraphError::EdgeNotFound(id) => write!(f, "Edge not found: {}", id),
+            BeliefGraphError::ValidationError(msg) => write!(f, "Validation error: {}", msg),
+            BeliefGraphError::NodeExists(id) => write!(f, "Node already exists: {}", id),
+            BeliefGraphError::EdgeExists(id) => write!(f, "Edge already exists: {}", id),
+            BeliefGraphError::CapacityExceeded { nodes, edges } => {
+                write!(f, "Capacity exceeded: nodes={}, edges={}", nodes, edges)
+            }
             BeliefGraphError::QueryFailed(msg) => write!(f, "Query failed: {}", msg),
             BeliefGraphError::SerializationError(msg) => write!(f, "Serialization error: {}", msg),
+            BeliefGraphError::InternalError(msg) => write!(f, "Internal error: {}", msg),
         }
     }
 }
