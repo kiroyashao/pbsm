@@ -9,6 +9,8 @@
 
 ***
 
+**<span style="color:red;font-weight:bold; margin: 0 20px;">(!! The project is still under development, with many features yet to be implemented. It will take some time to complete and polish them.)</span>**
+
 - [中文文档](README_zh.md)
 
 ## Why PBSM?

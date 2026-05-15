@@ -249,7 +249,7 @@ impl PbsmOrchestrator {
         severity: AnomalySeverity,
     ) -> Result<HandleErrorResult, String> {
         let anomaly_report: GetAnomalyReportResponse =
-            self.metacognitive_controller().detect_anomalies(None);
+            self.metacognitive_controller().detect_anomalies(None).map_err(|e| e.to_string())?;
 
         let anomaly_type = match severity {
             AnomalySeverity::High => AnomalyType::ExcessiveFocus,

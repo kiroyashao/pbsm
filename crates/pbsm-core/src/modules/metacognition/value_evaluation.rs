@@ -89,6 +89,7 @@ impl ValueEvaluator {
         Ok(EvaluateMemoryValueResponse {
             value_scores: results,
             statistics,
+            success: true,
         })
     }
 
@@ -170,6 +171,7 @@ impl ValueEvaluator {
                 is_valid: true,
                 error_message: None,
             },
+            success: true,
         })
     }
 

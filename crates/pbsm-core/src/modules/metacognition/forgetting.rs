@@ -100,15 +100,13 @@ impl ForgettingExecutor {
         candidates
     }
 
-    pub fn trigger_forget(&self, request: ForceForgetRequest) -> Result<ForceForgetResponse> {
-        let value_scores: HashMap<String, f64> = request
-            .node_ids
-            .iter()
-            .map(|id| (id.clone(), 0.1))
-            .collect();
-
+    pub fn trigger_forget(
+        &self,
+        request: ForceForgetRequest,
+        value_scores: &HashMap<String, f64>,
+    ) -> Result<ForceForgetResponse> {
         let candidates =
-            self.identify_forget_candidates(&request.node_ids, &value_scores, request.reason);
+            self.identify_forget_candidates(&request.node_ids, value_scores, request.reason);
 
         let mut forgotten_ids = Vec::new();
         let mut protected_ids = Vec::new();
@@ -177,6 +175,7 @@ impl ForgettingExecutor {
             protected_ids,
             deferred_ids,
             archive_results,
+            success: true,
         })
     }
 
@@ -220,6 +219,15 @@ impl ForgettingExecutor {
             {
                 ready_to_forget.push(node_id.clone());
                 to_remove.push(node_id.clone());
+            }
+
+            if entry.defer_steps >= self.config.max_defer_steps && current_residual >= 0.9 {
+                let _ = self.event_publisher.publish(MetacognitiveEvent::DeferredForgetWarning {
+                    node_id: node_id.clone(),
+                    residual_association: current_residual,
+                    defer_steps: entry.defer_steps,
+                    max_defer_steps: self.config.max_defer_steps,
+                });
             }
         }
 
@@ -383,12 +391,17 @@ mod tests {
         let executor = create_executor();
         executor.set_belief_age("n1", 20);
 
+        let value_scores = vec![("n1".to_string(), 0.1)].into_iter().collect();
+
         let result = executor
-            .trigger_forget(ForceForgetRequest {
-                node_ids: vec!["n1".to_string()],
-                force_flag: None,
-                reason: ForgetReason::LowValue,
-            })
+            .trigger_forget(
+                ForceForgetRequest {
+                    node_ids: vec!["n1".to_string()],
+                    force_flag: None,
+                    reason: ForgetReason::LowValue,
+                },
+                &value_scores,
+            )
             .unwrap();
 
         assert!(result.forgotten_ids.contains(&"n1".to_string()));
@@ -400,12 +413,17 @@ mod tests {
         executor.set_belief_age("n1", 20);
         executor.add_protected_belief("n1");
 
+        let value_scores = vec![("n1".to_string(), 0.1)].into_iter().collect();
+
         let result = executor
-            .trigger_forget(ForceForgetRequest {
-                node_ids: vec!["n1".to_string()],
-                force_flag: None,
-                reason: ForgetReason::LowValue,
-            })
+            .trigger_forget(
+                ForceForgetRequest {
+                    node_ids: vec!["n1".to_string()],
+                    force_flag: None,
+                    reason: ForgetReason::LowValue,
+                },
+                &value_scores,
+            )
             .unwrap();
 
         assert!(result.protected_ids.contains(&"n1".to_string()));
@@ -418,12 +436,17 @@ mod tests {
         executor.set_belief_age("n1", 20);
         executor.add_protected_belief("n1");
 
+        let value_scores = vec![("n1".to_string(), 0.1)].into_iter().collect();
+
         let result = executor
-            .trigger_forget(ForceForgetRequest {
-                node_ids: vec!["n1".to_string()],
-                force_flag: Some(true),
-                reason: ForgetReason::UserRequest,
-            })
+            .trigger_forget(
+                ForceForgetRequest {
+                    node_ids: vec!["n1".to_string()],
+                    force_flag: Some(true),
+                    reason: ForgetReason::UserRequest,
+                },
+                &value_scores,
+            )
             .unwrap();
 
         assert!(result.forgotten_ids.contains(&"n1".to_string()));
@@ -435,12 +458,17 @@ mod tests {
         executor.set_belief_age("n1", 20);
         executor.set_belief_residual_association("n1", 0.8);
 
+        let value_scores = vec![("n1".to_string(), 0.1)].into_iter().collect();
+
         let result = executor
-            .trigger_forget(ForceForgetRequest {
-                node_ids: vec!["n1".to_string()],
-                force_flag: None,
-                reason: ForgetReason::LowValue,
-            })
+            .trigger_forget(
+                ForceForgetRequest {
+                    node_ids: vec!["n1".to_string()],
+                    force_flag: None,
+                    reason: ForgetReason::LowValue,
+                },
+                &value_scores,
+            )
             .unwrap();
 
         assert!(result.deferred_ids.contains(&"n1".to_string()));

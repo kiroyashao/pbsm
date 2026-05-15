@@ -2,33 +2,33 @@ use thiserror::Error;
 
 #[derive(Error, Debug, Clone)]
 pub enum MetacognitiveError {
-    #[error("Invalid parameter: {field} (code: M3_001)")]
+    #[error("Invalid parameter: {field} (code: MCA-E001)")]
     InvalidParameter { field: String },
 
     #[error(
-        "Attention parameter out of bounds: {value} (valid range: [{min}, {max}]) (code: M3_002)"
+        "Attention parameter out of bounds: {value} (valid range: [{min}, {max}]) (code: MCA-E002)"
     )]
     AttentionOutOfBounds { value: f64, min: f64, max: f64 },
 
-    #[error("Weight validation failed: {reason} (code: M3_003)")]
+    #[error("Weight validation failed: {reason} (code: MCA-E003)")]
     WeightValidationFailed { reason: String },
 
-    #[error("Belief not found: {node_id} (code: M3_004)")]
+    #[error("Belief not found: {node_id} (code: MCA-E004)")]
     BeliefNotFound { node_id: String },
 
-    #[error("Protected belief cannot be forgotten: {node_id} (code: M3_005)")]
+    #[error("Protected belief cannot be forgotten: {node_id} (code: MCA-E005)")]
     ForgetProtectedBelief { node_id: String },
 
-    #[error("External memory error: {0} (code: M3_006)")]
+    #[error("External memory error: {0} (code: MCA-E006)")]
     ExternalMemoryError(String),
 
-    #[error("Anomaly detection failed: {0} (code: M3_007)")]
+    #[error("Anomaly detection failed: {0} (code: MCA-E007)")]
     AnomalyDetectionFailed(String),
 
-    #[error("Configuration error: {0} (code: M3_008)")]
+    #[error("Configuration error: {0} (code: MCA-E008)")]
     ConfigurationError(String),
 
-    #[error("Internal error: {0} (code: M3_999)")]
+    #[error("Internal error: {0} (code: MCA-E999)")]
     InternalError(String),
 }
 

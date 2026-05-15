@@ -31,7 +31,7 @@ impl AttentionController {
                 min: config.min_attention,
                 max: config.max_attention,
             },
-            last_adjustment_timestamp: Utc::now(),
+            last_adjustment_timestamp: chrono::DateTime::UNIX_EPOCH,
         };
         Self {
             state: RwLock::new(state),
@@ -60,6 +60,20 @@ impl AttentionController {
         let mut state = self.state.write();
         let previous_value = state.parameter;
 
+        let elapsed_ms = (Utc::now() - state.last_adjustment_timestamp)
+            .num_milliseconds()
+            .unsigned_abs();
+        if elapsed_ms < self.config.min_adjustment_interval_ms
+            && request.trigger != AdjustmentTrigger::UserOverride
+        {
+            return Err(MetacognitiveError::InvalidParameter {
+                field: format!(
+                    "Minimum adjustment interval not elapsed: {}ms < {}ms",
+                    elapsed_ms, self.config.min_adjustment_interval_ms
+                ),
+            });
+        }
+
         let new_value = if let Some(target) = request.target_value {
             if request.trigger == AdjustmentTrigger::UserOverride
                 || request.override_mode.unwrap_or(false)
@@ -79,7 +93,13 @@ impl AttentionController {
             let delta = match request.trigger {
                 AdjustmentTrigger::PredictionVerified => -self.config.decay_rate,
                 AdjustmentTrigger::PredictionDeviation => self.config.boost_step,
-                AdjustmentTrigger::TimeDecay => -self.config.time_decay_rate,
+                AdjustmentTrigger::TimeDecay => {
+                    let elapsed_ms = (Utc::now() - state.last_adjustment_timestamp)
+                        .num_milliseconds()
+                        .unsigned_abs();
+                    let elapsed_steps = (elapsed_ms as f64 / 1000.0).max(1.0);
+                    -self.config.time_decay_rate * elapsed_steps
+                }
                 AdjustmentTrigger::UserOverride => {
                     return Err(MetacognitiveError::InvalidParameter {
                         field: "Either delta or target_value must be provided for UserOverride"
@@ -188,6 +208,7 @@ impl AttentionController {
         Ok(SetAttentionBoundsResponse {
             previous_bounds,
             new_bounds,
+            success: true,
         })
     }
 
@@ -234,10 +255,21 @@ impl AttentionController {
             .map(|r| r.severity)
             .fold(0.0_f64, |a, b| a.max(b));
 
+        let resolution_order: Vec<String> = {
+            let mut sorted: Vec<&ResidualInfo> = top_residuals.to_vec();
+            sorted.sort_by(|a, b| {
+                let depth_a = a.avg_root_hops;
+                let depth_b = b.avg_root_hops;
+                depth_b.cmp(&depth_a)
+            });
+            sorted.iter().map(|r| r.id.clone()).collect()
+        };
+
         FocusSummary {
             focus_count: foci.len(),
             top_foci: foci,
             overall_focus_level: overall_level,
+            resolution_order,
         }
     }
 

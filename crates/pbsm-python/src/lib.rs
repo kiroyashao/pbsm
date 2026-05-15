@@ -861,7 +861,8 @@ impl PyPbsmOrchestrator {
         let report = self
             .inner
             .metacognitive_controller()
-            .detect_anomalies(window_size);
+            .detect_anomalies(window_size)
+            .map_err(|e| PyRuntimeError::new_err(format!("Anomaly detection failed: {}", e)))?;
         let result = serde_json::json!({
             "has_anomalies": report.has_anomalies,
             "severity": format!("{:?}", report.severity),

@@ -6,7 +6,8 @@ use super::config::AnomalyDetectionConfig;
 use super::error::Result;
 use super::events::{MetacognitiveEvent, MetacognitiveEventPublisher};
 use super::types::{
-    AdjustmentRecord, Anomaly, AnomalyReport, AnomalySeverity, AnomalyType, Intervention,
+    AdjustmentRecord, Anomaly, AnomalyReport, AnomalySeverity, AnomalyType,
+    GetAnomalyReportRequest, GetAnomalyReportResponse, Intervention,
     TriggerInterventionRequest, TriggerInterventionResponse,
 };
 
@@ -294,7 +295,21 @@ impl AnomalyDetector {
         })
     }
 
-    pub fn get_anomaly_report(&self) -> Option<AnomalyReport> {
+    pub fn get_anomaly_report(
+        &self,
+        request: GetAnomalyReportRequest,
+        history: &[AdjustmentRecord],
+    ) -> Result<GetAnomalyReportResponse> {
+        let report = self.detect_anomalies(history, request.window_size);
+        Ok(GetAnomalyReportResponse {
+            has_anomalies: report.has_anomalies,
+            severity: report.severity,
+            anomalies: report.anomalies,
+            last_check_timestamp: report.last_check_timestamp,
+        })
+    }
+
+    pub fn get_last_anomaly_report(&self) -> Option<AnomalyReport> {
         self.last_report.read().clone()
     }
 }
@@ -516,7 +531,7 @@ mod tests {
     #[test]
     fn test_get_anomaly_report_initially_none() {
         let detector = create_detector();
-        assert!(detector.get_anomaly_report().is_none());
+        assert!(detector.get_last_anomaly_report().is_none());
     }
 
     #[test]
@@ -527,6 +542,6 @@ mod tests {
             .collect();
         detector.detect_anomalies(&history, None);
 
-        assert!(detector.get_anomaly_report().is_some());
+        assert!(detector.get_last_anomaly_report().is_some());
     }
 }

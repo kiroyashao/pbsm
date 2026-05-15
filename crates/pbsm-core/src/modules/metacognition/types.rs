@@ -162,6 +162,24 @@ impl Default for ValueFactors {
     }
 }
 
+impl ValueFactors {
+    pub fn validate(&self) -> std::result::Result<(), super::error::MetacognitiveError> {
+        for (name, value) in [
+            ("goal_relevance", self.goal_relevance),
+            ("access_frequency", self.access_frequency),
+            ("recency", self.recency),
+            ("residual_association", self.residual_association),
+        ] {
+            if !(0.0..=1.0).contains(&value) {
+                return Err(super::error::MetacognitiveError::InvalidParameter {
+                    field: format!("{} must be in range [0, 1], got {}", name, value),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValueEvaluation {
     pub node_id: String,
@@ -193,6 +211,7 @@ pub struct FocusSummary {
     pub focus_count: usize,
     pub top_foci: Vec<FocusItem>,
     pub overall_focus_level: f64,
+    pub resolution_order: Vec<String>,
 }
 
 impl Default for FocusSummary {
@@ -201,6 +220,7 @@ impl Default for FocusSummary {
             focus_count: 0,
             top_foci: Vec::new(),
             overall_focus_level: 0.0,
+            resolution_order: Vec::new(),
         }
     }
 }
@@ -292,6 +312,7 @@ pub struct SetAttentionBoundsRequest {
 pub struct SetAttentionBoundsResponse {
     pub previous_bounds: AttentionBounds,
     pub new_bounds: AttentionBounds,
+    pub success: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -336,6 +357,7 @@ pub struct ValueStatistics {
 pub struct EvaluateMemoryValueResponse {
     pub value_scores: Vec<MemoryValueResult>,
     pub statistics: ValueStatistics,
+    pub success: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -355,6 +377,7 @@ pub struct UpdateValueWeightsResponse {
     pub previous_weights: WeightConfiguration,
     pub new_weights: WeightConfiguration,
     pub validation_result: ValidationResult,
+    pub success: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -378,6 +401,7 @@ pub struct ForceForgetResponse {
     pub protected_ids: Vec<String>,
     pub deferred_ids: Vec<String>,
     pub archive_results: Vec<ArchiveResult>,
+    pub success: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
