@@ -16,7 +16,7 @@ impl ExperienceLayer {
         Self { sqlite, sled }
     }
 
-    pub async fn write_experience(
+    pub fn write_experience(
         &self,
         experience: Experience,
         auto_verify: bool,
@@ -37,7 +37,7 @@ impl ExperienceLayer {
             &experience_id,
             &experience.content.domain,
             &pattern_type_str,
-            0.0,
+            experience.content.confidence,
             timestamp,
             &content_json,
         )?;
@@ -55,7 +55,7 @@ impl ExperienceLayer {
         })
     }
 
-    pub async fn query_by_domain(
+    pub fn query_by_domain(
         &self,
         domain: &str,
         confidence_threshold: Option<f64>,
@@ -80,6 +80,8 @@ impl ExperienceLayer {
                 memory_type: "experience".to_string(),
                 relevance_score: row.confidence,
                 confidence: row.confidence,
+                importance: 0.0,
+                recency_score: 0.0,
                 summary: format!("Experience in domain: {}", row.domain),
                 content,
                 source_references: vec![SourceReference {
@@ -96,7 +98,7 @@ impl ExperienceLayer {
         Ok(entries)
     }
 
-    pub async fn query_by_pattern_type(&self, pattern_type: &str) -> Result<Vec<MemoryEntry>> {
+    pub fn query_by_pattern_type(&self, pattern_type: &str) -> Result<Vec<MemoryEntry>> {
         let rows = self.sqlite.query_experiences_by_pattern(pattern_type)?;
         let mut entries = Vec::with_capacity(rows.len());
         for row in &rows {
@@ -115,6 +117,8 @@ impl ExperienceLayer {
                 memory_type: "experience".to_string(),
                 relevance_score: row.confidence,
                 confidence: row.confidence,
+                importance: 0.0,
+                recency_score: 0.0,
                 summary: format!("Experience with pattern: {}", row.pattern_type),
                 content,
                 source_references: vec![SourceReference {
@@ -131,12 +135,12 @@ impl ExperienceLayer {
         Ok(entries)
     }
 
-    pub async fn update_usage(&self, experience_id: &str) -> Result<()> {
+    pub fn update_usage(&self, experience_id: &str) -> Result<()> {
         self.sqlite.update_experience_usage(experience_id)?;
         Ok(())
     }
 
-    pub async fn delete_experience(&self, experience_id: &str) -> Result<bool> {
+    pub fn delete_experience(&self, experience_id: &str) -> Result<bool> {
         let sled_removed = self.sled.remove_experience(experience_id)?;
         let sqlite_deleted = self.sqlite.delete_experience(experience_id)?;
         Ok(sled_removed || sqlite_deleted)
@@ -157,47 +161,63 @@ mod tests {
     fn make_experience(id: &str, domain: &str, pattern: PatternType) -> Experience {
         Experience {
             experience_id: id.to_string(),
-            metadata: serde_json::json!({"created_by": "test"}),
+            metadata: ExperienceMetadata {
+                source_type: "test".to_string(),
+                source_snapshot_ids: None,
+                source_log_ids: None,
+                verification_count: 0,
+                last_used_at: None,
+                tags: None,
+            },
             content: ExperienceContent {
                 title: "Test Experience".to_string(),
                 summary: "A test experience entry".to_string(),
                 domain: domain.to_string(),
                 pattern,
+                confidence: 0.9,
                 context: serde_json::Value::Null,
                 knowledge: serde_json::Value::Null,
                 outcomes: serde_json::Value::Null,
             },
-            usage_stats: serde_json::json!({"access_count": 0}),
-            relationships: serde_json::json!({}),
+            usage_stats: ExperienceUsageStats {
+                access_count: 0,
+                last_accessed_at: None,
+                verification_count: 0,
+            },
+            relationships: ExperienceRelationships {
+                related_experience_ids: None,
+                contradicts_experience_ids: None,
+                refines_experience_ids: None,
+            },
         }
     }
 
-    #[tokio::test]
-    async fn test_write_experience() {
+    #[test]
+    fn test_write_experience() {
         let (sqlite, sled) = setup();
         let layer = ExperienceLayer::new(sqlite, sled);
 
         let exp = make_experience("exp-001", "navigation", PatternType::ErrorHandling);
-        let result = layer.write_experience(exp, false).await.unwrap();
+        let result = layer.write_experience(exp, false).unwrap();
 
         assert_eq!(result.experience_id, "exp-001");
         assert!(!result.verified);
     }
 
-    #[tokio::test]
-    async fn test_write_experience_auto_verify() {
+    #[test]
+    fn test_write_experience_auto_verify() {
         let (sqlite, sled) = setup();
         let layer = ExperienceLayer::new(sqlite, sled);
 
         let exp = make_experience("exp-002", "planning", PatternType::TaskPattern);
-        let result = layer.write_experience(exp, true).await.unwrap();
+        let result = layer.write_experience(exp, true).unwrap();
 
         assert_eq!(result.experience_id, "exp-002");
         assert!(result.verified);
     }
 
-    #[tokio::test]
-    async fn test_query_by_domain() {
+    #[test]
+    fn test_query_by_domain() {
         let (sqlite, sled) = setup();
         let layer = ExperienceLayer::new(sqlite, sled);
 
@@ -206,35 +226,32 @@ mod tests {
                 make_experience("exp-010", "navigation", PatternType::ErrorHandling),
                 false,
             )
-            .await
             .unwrap();
         layer
             .write_experience(
                 make_experience("exp-011", "navigation", PatternType::TaskPattern),
                 false,
             )
-            .await
             .unwrap();
         layer
             .write_experience(
                 make_experience("exp-012", "planning", PatternType::GoalDecomposition),
                 false,
             )
-            .await
             .unwrap();
 
-        let entries = layer.query_by_domain("navigation", None).await.unwrap();
+        let entries = layer.query_by_domain("navigation", None).unwrap();
         assert_eq!(entries.len(), 2);
 
-        let entries = layer.query_by_domain("planning", None).await.unwrap();
+        let entries = layer.query_by_domain("planning", None).unwrap();
         assert_eq!(entries.len(), 1);
 
-        let entries = layer.query_by_domain("nonexistent", None).await.unwrap();
+        let entries = layer.query_by_domain("nonexistent", None).unwrap();
         assert!(entries.is_empty());
     }
 
-    #[tokio::test]
-    async fn test_query_by_pattern_type() {
+    #[test]
+    fn test_query_by_pattern_type() {
         let (sqlite, sled) = setup();
         let layer = ExperienceLayer::new(sqlite, sled);
 
@@ -243,32 +260,29 @@ mod tests {
                 make_experience("exp-020", "nav", PatternType::ErrorHandling),
                 false,
             )
-            .await
             .unwrap();
         layer
             .write_experience(
                 make_experience("exp-021", "plan", PatternType::ErrorHandling),
                 false,
             )
-            .await
             .unwrap();
         layer
             .write_experience(
                 make_experience("exp-022", "nav", PatternType::ToolSequence),
                 false,
             )
-            .await
             .unwrap();
 
-        let entries = layer.query_by_pattern_type("ERROR_HANDLING").await.unwrap();
+        let entries = layer.query_by_pattern_type("ERROR_HANDLING").unwrap();
         assert_eq!(entries.len(), 2);
 
-        let entries = layer.query_by_pattern_type("TOOL_SEQUENCE").await.unwrap();
+        let entries = layer.query_by_pattern_type("TOOL_SEQUENCE").unwrap();
         assert_eq!(entries.len(), 1);
     }
 
-    #[tokio::test]
-    async fn test_update_usage() {
+    #[test]
+    fn test_update_usage() {
         let (sqlite, sled) = setup();
         let layer = ExperienceLayer::new(sqlite, sled);
 
@@ -277,18 +291,17 @@ mod tests {
                 make_experience("exp-030", "nav", PatternType::ErrorHandling),
                 false,
             )
-            .await
             .unwrap();
 
-        layer.update_usage("exp-030").await.unwrap();
-        layer.update_usage("exp-030").await.unwrap();
+        layer.update_usage("exp-030").unwrap();
+        layer.update_usage("exp-030").unwrap();
 
-        let entries = layer.query_by_domain("nav", None).await.unwrap();
+        let entries = layer.query_by_domain("nav", None).unwrap();
         assert_eq!(entries[0].access_count, 2);
     }
 
-    #[tokio::test]
-    async fn test_delete_experience() {
+    #[test]
+    fn test_delete_experience() {
         let (sqlite, sled) = setup();
         let layer = ExperienceLayer::new(sqlite, sled);
 
@@ -297,21 +310,20 @@ mod tests {
                 make_experience("exp-040", "nav", PatternType::ErrorHandling),
                 false,
             )
-            .await
             .unwrap();
 
-        let deleted = layer.delete_experience("exp-040").await.unwrap();
+        let deleted = layer.delete_experience("exp-040").unwrap();
         assert!(deleted);
 
-        let deleted_again = layer.delete_experience("exp-040").await.unwrap();
+        let deleted_again = layer.delete_experience("exp-040").unwrap();
         assert!(!deleted_again);
 
-        let entries = layer.query_by_domain("nav", None).await.unwrap();
+        let entries = layer.query_by_domain("nav", None).unwrap();
         assert!(entries.is_empty());
     }
 
-    #[tokio::test]
-    async fn test_query_by_domain_returns_memory_entries() {
+    #[test]
+    fn test_query_by_domain_returns_memory_entries() {
         let (sqlite, sled) = setup();
         let layer = ExperienceLayer::new(sqlite, sled);
 
@@ -320,10 +332,9 @@ mod tests {
                 make_experience("exp-050", "testing", PatternType::BeliefCorrection),
                 false,
             )
-            .await
             .unwrap();
 
-        let entries = layer.query_by_domain("testing", None).await.unwrap();
+        let entries = layer.query_by_domain("testing", None).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].layer, MemoryLayer::Experience);
         assert_eq!(entries[0].entry_id, "exp-050");

@@ -25,6 +25,16 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub type Timestamp = i64;
+
+pub fn validate_confidence(value: f64) -> Result<f64, String> {
+    if !(0.0..=1.0).contains(&value) {
+        Err(format!("Confidence must be in range [0.0, 1.0], got {}", value))
+    } else {
+        Ok(value)
+    }
+}
+
 /// 记忆层枚举
 ///
 /// # 层级说明
@@ -209,14 +219,58 @@ pub enum MemoryLoadingState {
     Failed,
 }
 
-/// 事件严重级别枚举
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum EventSeverity {
-    Info,
-    Warning,
-    Error,
-    Critical,
+#[derive(Debug)]
+pub struct MemoryLoadingStateMachine {
+    current_state: MemoryLoadingState,
+}
+
+impl MemoryLoadingStateMachine {
+    pub fn new() -> Self {
+        Self {
+            current_state: MemoryLoadingState::Idle,
+        }
+    }
+
+    pub fn current_state(&self) -> MemoryLoadingState {
+        self.current_state
+    }
+
+    pub fn transition(&mut self, next: MemoryLoadingState) -> Result<MemoryLoadingState, String> {
+        let valid = match (&self.current_state, &next) {
+            (MemoryLoadingState::Idle, MemoryLoadingState::Triggered) => true,
+            (MemoryLoadingState::Triggered, MemoryLoadingState::Retrieving) => true,
+            (MemoryLoadingState::Triggered, MemoryLoadingState::Failed) => true,
+            (MemoryLoadingState::Retrieving, MemoryLoadingState::Filtering) => true,
+            (MemoryLoadingState::Retrieving, MemoryLoadingState::Failed) => true,
+            (MemoryLoadingState::Filtering, MemoryLoadingState::Transforming) => true,
+            (MemoryLoadingState::Filtering, MemoryLoadingState::Failed) => true,
+            (MemoryLoadingState::Transforming, MemoryLoadingState::Integrating) => true,
+            (MemoryLoadingState::Transforming, MemoryLoadingState::Failed) => true,
+            (MemoryLoadingState::Integrating, MemoryLoadingState::Completed) => true,
+            (MemoryLoadingState::Integrating, MemoryLoadingState::Failed) => true,
+            (MemoryLoadingState::Completed, MemoryLoadingState::Idle) => true,
+            (MemoryLoadingState::Failed, MemoryLoadingState::Idle) => true,
+            _ => false,
+        };
+        if !valid {
+            return Err(format!(
+                "Invalid state transition from {:?} to {:?}",
+                self.current_state, next
+            ));
+        }
+        self.current_state = next;
+        Ok(self.current_state)
+    }
+
+    pub fn reset(&mut self) {
+        self.current_state = MemoryLoadingState::Idle;
+    }
+}
+
+impl Default for MemoryLoadingStateMachine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// 置信度缺口紧迫性枚举
@@ -269,6 +323,26 @@ pub struct SourceReference {
     pub ref_path: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LogReferences {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub related_prediction_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub related_belief_node_ids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_log_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotTrigger {
+    pub event_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<String>,
+    pub description: String,
+}
+
 /// 分页信息结构体
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -302,6 +376,8 @@ pub struct MemoryEntry {
     pub memory_type: String,
     pub relevance_score: f64,
     pub confidence: f64,
+    pub importance: f64,
+    pub recency_score: f64,
     pub summary: String,
     pub content: serde_json::Value,
     pub source_references: Vec<SourceReference>,
@@ -454,8 +530,12 @@ pub struct SnapshotMetadata {
     pub version: String,
     pub snapshot_type: SnapshotType,
     pub agent_id: String,
-    pub trigger_description: String,
-    pub created_at: i64,
+    pub trigger: SnapshotTrigger,
+    pub created_at: Timestamp,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compression_ratio: Option<f64>,
 }
 
 /// 信念状态结构体
@@ -540,6 +620,7 @@ pub struct RestoreSnapshotResult {
     pub snapshot: FullSnapshot,
     pub restored: bool,
     pub duration_ms: i64,
+    pub target_state: StateTarget,
 }
 
 /// 原始日志条目结构体
@@ -556,7 +637,7 @@ pub struct RawLogEntry {
     pub timestamp: i64,
     pub sequence_number: u64,
     pub payload: serde_json::Value,
-    pub references: serde_json::Value,
+    pub references: LogReferences,
 }
 
 /// 写入日志结果结构体
@@ -565,6 +646,52 @@ pub struct RawLogEntry {
 pub struct WriteLogResult {
     pub log_id: String,
     pub timestamp: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExperienceMetadata {
+    pub source_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_snapshot_ids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_log_ids: Option<Vec<String>>,
+    pub verification_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExperienceUsageStats {
+    pub access_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_accessed_at: Option<i64>,
+    pub verification_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExperienceRelationships {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub related_experience_ids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contradicts_experience_ids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refines_experience_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextConstraints {
+    pub current_domain: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_belief_ids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub excluded_topics: Option<Vec<String>>,
+    pub max_recency_days: Option<u32>,
 }
 
 /// 经验内容结构体
@@ -577,6 +704,7 @@ pub struct ExperienceContent {
     pub summary: String,
     pub domain: String,
     pub pattern: PatternType,
+    pub confidence: f64,
     pub context: serde_json::Value,
     pub knowledge: serde_json::Value,
     pub outcomes: serde_json::Value,
@@ -589,10 +717,10 @@ pub struct ExperienceContent {
 #[serde(rename_all = "camelCase")]
 pub struct Experience {
     pub experience_id: String,
-    pub metadata: serde_json::Value,
+    pub metadata: ExperienceMetadata,
     pub content: ExperienceContent,
-    pub usage_stats: serde_json::Value,
-    pub relationships: serde_json::Value,
+    pub usage_stats: ExperienceUsageStats,
+    pub relationships: ExperienceRelationships,
 }
 
 /// 写入经验结果结构体
@@ -786,21 +914,6 @@ mod tests {
     }
 
     #[test]
-    fn test_event_severity_ordering() {
-        let severities = vec![
-            EventSeverity::Info,
-            EventSeverity::Warning,
-            EventSeverity::Error,
-            EventSeverity::Critical,
-        ];
-        for severity in severities {
-            let json = serde_json::to_string(&severity).unwrap();
-            let deserialized: EventSeverity = serde_json::from_str(&json).unwrap();
-            assert_eq!(deserialized, severity);
-        }
-    }
-
-    #[test]
     fn test_source_reference_creation() {
         let sr = SourceReference {
             ref_type: "log".to_string(),
@@ -855,6 +968,8 @@ mod tests {
             memory_type: "pattern".to_string(),
             relevance_score: 0.85,
             confidence: 0.92,
+            importance: 0.8,
+            recency_score: 0.9,
             summary: "Test entry".to_string(),
             content: serde_json::json!({"key": "value"}),
             source_references: vec![],
@@ -876,6 +991,8 @@ mod tests {
             memory_type: "dialogue".to_string(),
             relevance_score: 0.5,
             confidence: 0.7,
+            importance: 0.6,
+            recency_score: 0.8,
             summary: String::new(),
             content: serde_json::Value::Null,
             source_references: vec![],
@@ -1053,8 +1170,14 @@ mod tests {
             version: "1.0".to_string(),
             snapshot_type: SnapshotType::Automatic,
             agent_id: "agent-1".to_string(),
-            trigger_description: "Scheduled".to_string(),
+            trigger: SnapshotTrigger {
+                event_type: "scheduled".to_string(),
+                event_id: None,
+                description: "Scheduled snapshot".to_string(),
+            },
             created_at: 1700000000000_i64,
+            checksum: None,
+            compression_ratio: None,
         };
         let json = serde_json::to_string(&meta).unwrap();
         let deserialized: SnapshotMetadata = serde_json::from_str(&json).unwrap();
@@ -1110,7 +1233,11 @@ mod tests {
             timestamp: 1700000000000_i64,
             sequence_number: 42,
             payload: serde_json::json!({"message": "hello"}),
-            references: serde_json::json!({}),
+            references: LogReferences {
+                related_prediction_id: None,
+                related_belief_node_ids: None,
+                parent_log_id: None,
+            },
         };
         let json = serde_json::to_string(&entry).unwrap();
         let deserialized: RawLogEntry = serde_json::from_str(&json).unwrap();
@@ -1134,6 +1261,7 @@ mod tests {
             summary: "How to recover from tool failures".to_string(),
             domain: "error_handling".to_string(),
             pattern: PatternType::ErrorHandling,
+            confidence: 0.85,
             context: serde_json::json!({}),
             knowledge: serde_json::json!({}),
             outcomes: serde_json::json!({}),
@@ -1145,18 +1273,34 @@ mod tests {
     fn test_experience() {
         let exp = Experience {
             experience_id: "exp-001".to_string(),
-            metadata: serde_json::json!({"created_by": "agent-1"}),
+            metadata: ExperienceMetadata {
+                source_type: "agent".to_string(),
+                source_snapshot_ids: None,
+                source_log_ids: None,
+                verification_count: 1,
+                last_used_at: None,
+                tags: None,
+            },
             content: ExperienceContent {
                 title: "Test".to_string(),
                 summary: String::new(),
                 domain: "test".to_string(),
                 pattern: PatternType::TaskPattern,
+                confidence: 0.9,
                 context: serde_json::Value::Null,
                 knowledge: serde_json::Value::Null,
                 outcomes: serde_json::Value::Null,
             },
-            usage_stats: serde_json::json!({"access_count": 5}),
-            relationships: serde_json::json!({}),
+            usage_stats: ExperienceUsageStats {
+                access_count: 5,
+                last_accessed_at: None,
+                verification_count: 1,
+            },
+            relationships: ExperienceRelationships {
+                related_experience_ids: None,
+                contradicts_experience_ids: None,
+                refines_experience_ids: None,
+            },
         };
         let json = serde_json::to_string(&exp).unwrap();
         let deserialized: Experience = serde_json::from_str(&json).unwrap();

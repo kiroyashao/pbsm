@@ -4,7 +4,8 @@ use crate::modules::memory::error::{MemoryError, Result};
 use crate::modules::memory::events::{
     create_cleanup_completed_event, create_experience_created_event,
     create_retrieval_completed_event, create_snapshot_created_event,
-    create_snapshot_restored_event, MemoryEventPublisher, NullMemoryEventPublisher,
+    create_snapshot_restored_event, ExternalEvent, ExternalEventSubscriber,
+    MemoryEventPublisher, NullExternalEventSubscriber, NullMemoryEventPublisher,
 };
 use crate::modules::memory::layers::experience::ExperienceLayer;
 use crate::modules::memory::layers::raw_log::RawLogLayer;
@@ -18,6 +19,7 @@ use crate::modules::memory::storage::transaction::TransactionManager;
 use crate::modules::memory::types::*;
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct ExternalMemoryStore {
     sqlite: Arc<SqliteStorage>,
     sled: Arc<SledKvStore>,
@@ -30,6 +32,7 @@ pub struct ExternalMemoryStore {
     problem_retriever: Arc<ProblemRetriever>,
     cleanup_engine: Arc<CleanupEngine>,
     event_publisher: Arc<dyn MemoryEventPublisher>,
+    external_event_subscriber: Arc<dyn ExternalEventSubscriber>,
     config: MemoryConfig,
 }
 
@@ -42,65 +45,78 @@ impl ExternalMemoryStore {
         config: MemoryConfig,
         publisher: Arc<dyn MemoryEventPublisher>,
     ) -> Result<Self> {
-        std::fs::create_dir_all(&config.storage_path).map_err(|e| {
-            MemoryError::StorageOpen(format!("failed to create storage directory: {e}"))
-        })?;
+        Self::open_with_subscriber(config, publisher, Arc::new(NullExternalEventSubscriber)).await
+    }
 
-        let db_path = config.storage_path.join("memory.db");
-        let sqlite = SqliteStorage::open(&db_path)?;
-        sqlite.init_schema()?;
-        let sqlite = Arc::new(sqlite);
+    pub async fn open_with_subscriber(
+        config: MemoryConfig,
+        publisher: Arc<dyn MemoryEventPublisher>,
+        subscriber: Arc<dyn ExternalEventSubscriber>,
+    ) -> Result<Self> {
+        tokio::task::spawn_blocking(move || {
+            std::fs::create_dir_all(&config.storage_path).map_err(|e| {
+                MemoryError::StorageOpen(format!("failed to create storage directory: {e}"))
+            })?;
 
-        let kv_path = config.storage_path.join("kv");
-        let sled = SledKvStore::open(&kv_path, SledConfig::default())?;
-        let sled = Arc::new(sled);
+            let db_path = config.storage_path.join("memory.db");
+            let sqlite = SqliteStorage::open(&db_path)?;
+            sqlite.init_schema()?;
+            let sqlite = Arc::new(sqlite);
 
-        let transaction_manager = Arc::new(TransactionManager::new(&sqlite));
+            let kv_path = config.storage_path.join("kv");
+            let sled = SledKvStore::open(&kv_path, SledConfig::default())?;
+            let sled = Arc::new(sled);
 
-        let raw_log_layer = Arc::new(RawLogLayer::new(Arc::clone(&sqlite), Arc::clone(&sled)));
+            let transaction_manager = Arc::new(TransactionManager::new(&sqlite));
 
-        let snapshot_layer = Arc::new(SnapshotLayer::new(
-            Arc::clone(&sqlite),
-            Arc::clone(&sled),
-            config.clone(),
-        ));
+            let raw_log_layer = Arc::new(RawLogLayer::new(Arc::clone(&sqlite), Arc::clone(&sled)));
 
-        let experience_layer =
-            Arc::new(ExperienceLayer::new(Arc::clone(&sqlite), Arc::clone(&sled)));
+            let snapshot_layer = Arc::new(SnapshotLayer::new(
+                Arc::clone(&sqlite),
+                Arc::clone(&sled),
+                config.clone(),
+            ));
 
-        let topic_retriever = Arc::new(TopicRetriever::new(
-            Arc::clone(&raw_log_layer),
-            Arc::clone(&snapshot_layer),
-            Arc::clone(&experience_layer),
-        ));
+            let experience_layer =
+                Arc::new(ExperienceLayer::new(Arc::clone(&sqlite), Arc::clone(&sled)));
 
-        let context_retriever = Arc::new(ContextRetriever::new(
-            Arc::clone(&experience_layer),
-            Arc::clone(&snapshot_layer),
-        ));
+            let topic_retriever = Arc::new(TopicRetriever::new(
+                Arc::clone(&raw_log_layer),
+                Arc::clone(&snapshot_layer),
+                Arc::clone(&experience_layer),
+            ));
 
-        let problem_retriever = Arc::new(ProblemRetriever::new(Arc::clone(&experience_layer)));
+            let context_retriever = Arc::new(ContextRetriever::new(
+                Arc::clone(&experience_layer),
+                Arc::clone(&snapshot_layer),
+            ));
 
-        let cleanup_engine = Arc::new(CleanupEngine::new(
-            Arc::clone(&sqlite),
-            Arc::clone(&sled),
-            config.clone(),
-        ));
+            let problem_retriever = Arc::new(ProblemRetriever::new(Arc::clone(&experience_layer)));
 
-        Ok(Self {
-            sqlite,
-            sled,
-            transaction_manager,
-            raw_log_layer,
-            snapshot_layer,
-            experience_layer,
-            topic_retriever,
-            context_retriever,
-            problem_retriever,
-            cleanup_engine,
-            event_publisher: publisher,
-            config,
+            let cleanup_engine = Arc::new(CleanupEngine::new(
+                Arc::clone(&sqlite),
+                Arc::clone(&sled),
+                config.clone(),
+            ));
+
+            Ok(Self {
+                sqlite,
+                sled,
+                transaction_manager,
+                raw_log_layer,
+                snapshot_layer,
+                experience_layer,
+                topic_retriever,
+                context_retriever,
+                problem_retriever,
+                cleanup_engine,
+                event_publisher: publisher,
+                external_event_subscriber: subscriber,
+                config,
+            })
         })
+        .await
+        .map_err(|e| MemoryError::BlockingTaskFailed(e.to_string()))?
     }
 
     pub async fn write_snapshot(
@@ -110,6 +126,36 @@ impl ExternalMemoryStore {
         belief_state: BeliefState,
         intention_state: IntentionState,
         attention_state: AttentionState,
+        trigger_event_type: &str,
+        trigger_description: &str,
+    ) -> Result<WriteSnapshotResult> {
+        let store = self.clone();
+        let session_id = session_id.to_string();
+        let trigger_event_type = trigger_event_type.to_string();
+        let trigger_description = trigger_description.to_string();
+        tokio::task::spawn_blocking(move || {
+            store.write_snapshot_sync(
+                &session_id,
+                snapshot_type,
+                belief_state,
+                intention_state,
+                attention_state,
+                &trigger_event_type,
+                &trigger_description,
+            )
+        })
+        .await
+        .map_err(|e| MemoryError::BlockingTaskFailed(e.to_string()))?
+    }
+
+    fn write_snapshot_sync(
+        &self,
+        session_id: &str,
+        snapshot_type: SnapshotType,
+        belief_state: BeliefState,
+        intention_state: IntentionState,
+        attention_state: AttentionState,
+        trigger_event_type: &str,
         trigger_description: &str,
     ) -> Result<WriteSnapshotResult> {
         let snapshot_id = uuid::Uuid::new_v4().to_string();
@@ -121,8 +167,14 @@ impl ExternalMemoryStore {
             version: "1.0".to_string(),
             snapshot_type,
             agent_id: String::new(),
-            trigger_description: trigger_description.to_string(),
+            trigger: SnapshotTrigger {
+                event_type: trigger_event_type.to_string(),
+                event_id: None,
+                description: trigger_description.to_string(),
+            },
             created_at,
+            checksum: None,
+            compression_ratio: None,
         };
 
         let result = self
@@ -133,8 +185,7 @@ impl ExternalMemoryStore {
                 intention_state,
                 attention_state,
                 self.config.compression_type,
-            )
-            .await?;
+            )?;
 
         let event = create_snapshot_created_event(
             &result.snapshot_id,
@@ -149,12 +200,27 @@ impl ExternalMemoryStore {
     pub async fn restore_snapshot(
         &self,
         snapshot_id: &str,
+        target_state: StateTarget,
+        validate_checksum: bool,
+    ) -> Result<RestoreSnapshotResult> {
+        let store = self.clone();
+        let snapshot_id = snapshot_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            store.restore_snapshot_sync(&snapshot_id, target_state, validate_checksum)
+        })
+        .await
+        .map_err(|e| MemoryError::BlockingTaskFailed(e.to_string()))?
+    }
+
+    fn restore_snapshot_sync(
+        &self,
+        snapshot_id: &str,
+        target_state: StateTarget,
         validate_checksum: bool,
     ) -> Result<RestoreSnapshotResult> {
         let result = self
             .snapshot_layer
-            .restore_snapshot(snapshot_id, validate_checksum)
-            .await?;
+            .restore_snapshot(snapshot_id, target_state, validate_checksum)?;
 
         let event = create_snapshot_restored_event(snapshot_id, result.duration_ms as u64);
         let _ = self.event_publisher.publish(event);
@@ -163,6 +229,13 @@ impl ExternalMemoryStore {
     }
 
     pub async fn retrieve_by_topic(&self, query: MemoryQuery) -> Result<RetrievalResult> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.retrieve_by_topic_sync(query))
+            .await
+            .map_err(|e| MemoryError::BlockingTaskFailed(e.to_string()))?
+    }
+
+    fn retrieve_by_topic_sync(&self, query: MemoryQuery) -> Result<RetrievalResult> {
         let limit = self.config.retrieval_default_limit;
         let result = self
             .topic_retriever
@@ -173,8 +246,7 @@ impl ExternalMemoryStore {
                 limit,
                 0,
                 query.include_raw_logs,
-            )
-            .await?;
+            )?;
 
         let event = create_retrieval_completed_event(
             "topic",
@@ -194,29 +266,65 @@ impl ExternalMemoryStore {
         confidence_gaps: Option<Vec<ConfidenceGap>>,
         retrieval_depth: RetrievalDepth,
     ) -> Result<ContextualRetrievalResult> {
+        let store = self.clone();
+        let intent_description = intent_description.to_string();
+        tokio::task::spawn_blocking(move || {
+            store.retrieve_by_context_sync(
+                &current_beliefs,
+                &intent_description,
+                confidence_gaps,
+                retrieval_depth,
+            )
+        })
+        .await
+        .map_err(|e| MemoryError::BlockingTaskFailed(e.to_string()))?
+    }
+
+    fn retrieve_by_context_sync(
+        &self,
+        current_beliefs: &[BeliefContext],
+        intent_description: &str,
+        confidence_gaps: Option<Vec<ConfidenceGap>>,
+        retrieval_depth: RetrievalDepth,
+    ) -> Result<ContextualRetrievalResult> {
         self.context_retriever
             .retrieve(
-                &current_beliefs,
+                current_beliefs,
                 intent_description,
                 confidence_gaps,
                 retrieval_depth,
                 self.config.retrieval_default_limit,
             )
-            .await
     }
 
     pub async fn retrieve_for_problem(
         &self,
         problem_description: &str,
         problem_type: Option<ProblemType>,
+        context_constraints: Option<ContextConstraints>,
+    ) -> Result<ProblemRetrievalResult> {
+        let store = self.clone();
+        let problem_description = problem_description.to_string();
+        tokio::task::spawn_blocking(move || {
+            store.retrieve_for_problem_sync(&problem_description, problem_type, context_constraints)
+        })
+        .await
+        .map_err(|e| MemoryError::BlockingTaskFailed(e.to_string()))?
+    }
+
+    fn retrieve_for_problem_sync(
+        &self,
+        problem_description: &str,
+        problem_type: Option<ProblemType>,
+        context_constraints: Option<ContextConstraints>,
     ) -> Result<ProblemRetrievalResult> {
         self.problem_retriever
             .retrieve(
                 problem_description,
                 problem_type,
+                context_constraints,
                 self.config.retrieval_default_limit,
             )
-            .await
     }
 
     pub async fn write_raw_log(
@@ -226,10 +334,29 @@ impl ExternalMemoryStore {
         payload: serde_json::Value,
         topic: &str,
         confidence: Option<f64>,
+        references: Option<LogReferences>,
+    ) -> Result<WriteLogResult> {
+        let store = self.clone();
+        let session_id = session_id.to_string();
+        let topic = topic.to_string();
+        tokio::task::spawn_blocking(move || {
+            store.write_raw_log_sync(&session_id, log_type, payload, &topic, confidence, references)
+        })
+        .await
+        .map_err(|e| MemoryError::BlockingTaskFailed(e.to_string()))?
+    }
+
+    fn write_raw_log_sync(
+        &self,
+        session_id: &str,
+        log_type: LogType,
+        payload: serde_json::Value,
+        topic: &str,
+        confidence: Option<f64>,
+        references: Option<LogReferences>,
     ) -> Result<WriteLogResult> {
         self.raw_log_layer
-            .write_log(session_id, log_type, payload, topic, confidence)
-            .await
+            .write_log(session_id, log_type, payload, topic, confidence, references)
     }
 
     pub async fn write_experience(
@@ -237,20 +364,38 @@ impl ExternalMemoryStore {
         experience: Experience,
         auto_verify: bool,
     ) -> Result<WriteExperienceResult> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.write_experience_sync(experience, auto_verify))
+            .await
+            .map_err(|e| MemoryError::BlockingTaskFailed(e.to_string()))?
+    }
+
+    fn write_experience_sync(
+        &self,
+        experience: Experience,
+        auto_verify: bool,
+    ) -> Result<WriteExperienceResult> {
         let pattern_type = format!("{:?}", experience.content.pattern);
+        let confidence = experience.content.confidence;
         let result = self
             .experience_layer
-            .write_experience(experience, auto_verify)
-            .await?;
+            .write_experience(experience, auto_verify)?;
 
-        let event = create_experience_created_event(&result.experience_id, &pattern_type, 0.0);
+        let event = create_experience_created_event(&result.experience_id, &pattern_type, confidence);
         let _ = self.event_publisher.publish(event);
 
         Ok(result)
     }
 
     pub async fn cleanup_expired(&self, policy: CleanupPolicy) -> Result<CleanupResult> {
-        let result = self.cleanup_engine.cleanup_expired(policy).await?;
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.cleanup_expired_sync(policy))
+            .await
+            .map_err(|e| MemoryError::BlockingTaskFailed(e.to_string()))?
+    }
+
+    fn cleanup_expired_sync(&self, policy: CleanupPolicy) -> Result<CleanupResult> {
+        let result = self.cleanup_engine.cleanup_expired(policy)?;
 
         let event = create_cleanup_completed_event(
             &format!("{:?}", result.cleanup_type),
@@ -264,6 +409,13 @@ impl ExternalMemoryStore {
     }
 
     pub async fn get_storage_stats(&self) -> Result<StorageStats> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.get_storage_stats_sync())
+            .await
+            .map_err(|e| MemoryError::BlockingTaskFailed(e.to_string()))?
+    }
+
+    fn get_storage_stats_sync(&self) -> Result<StorageStats> {
         let conn = self.sqlite.get_connection();
         let conn = conn.lock();
 
@@ -304,8 +456,78 @@ impl ExternalMemoryStore {
         &self.config
     }
 
+    pub async fn handle_external_event(&self, event: ExternalEvent) -> Result<()> {
+        match event {
+            ExternalEvent::SnapshotRequested { ref session_id, ref trigger_type, ref trigger_description } => {
+                let snapshot_type = match trigger_type.as_str() {
+                    "AUTOMATIC" => SnapshotType::Automatic,
+                    "ERROR_RECOVERY" => SnapshotType::ErrorRecovery,
+                    "SESSION_END" => SnapshotType::SessionEnd,
+                    "SCHEDULED" => SnapshotType::Scheduled,
+                    _ => SnapshotType::Automatic,
+                };
+                let belief_state = BeliefState {
+                    nodes: vec![],
+                    edges: vec![],
+                    active_predictions: vec![],
+                    unresolved_residuals: vec![],
+                };
+                let intention_state = IntentionState {
+                    stack: vec![],
+                    active_goal_pointer: 0,
+                    execution_depth: 0,
+                };
+                let attention_state = AttentionState {
+                    parameter: 0.5,
+                    mode: AttentionMode::Moderate,
+                    focus_areas: vec![],
+                };
+                self.write_snapshot(
+                    session_id,
+                    snapshot_type,
+                    belief_state,
+                    intention_state,
+                    attention_state,
+                    trigger_type,
+                    trigger_description,
+                ).await?;
+            }
+            ExternalEvent::ForgetTriggered { ref target_layers, reason: _ } => {
+                let scope = if target_layers.contains(&"RAW_LOG".to_string())
+                    && target_layers.contains(&"SNAPSHOT".to_string())
+                    && target_layers.contains(&"EXPERIENCE".to_string())
+                {
+                    CleanupScope::AllLayers
+                } else if target_layers.contains(&"RAW_LOG".to_string()) {
+                    CleanupScope::RawLogOnly
+                } else if target_layers.contains(&"SNAPSHOT".to_string()) {
+                    CleanupScope::SnapshotOnly
+                } else if target_layers.contains(&"EXPERIENCE".to_string()) {
+                    CleanupScope::ExperienceOnly
+                } else {
+                    CleanupScope::AllLayers
+                };
+                let policy = CleanupPolicy {
+                    cleanup_type: CleanupType::Standard,
+                    scope,
+                    max_age_days: Some(self.config.max_log_age_days),
+                    min_importance: None,
+                    dry_run: false,
+                };
+                self.cleanup_expired(policy).await?;
+            }
+            ExternalEvent::ForgetCompleted { .. } => {}
+            ExternalEvent::BeliefGraphChanged { .. } => {}
+        }
+        self.external_event_subscriber.on_external_event(event);
+        Ok(())
+    }
+
     pub async fn close(&self) -> Result<()> {
-        self.sled.flush()
+        let sled = Arc::clone(&self.sled);
+        tokio::task::spawn_blocking(move || sled.flush())
+            .await
+            .map_err(|e| MemoryError::BlockingTaskFailed(e.to_string()))?
     }
 }
 
@@ -342,18 +564,34 @@ mod tests {
     fn make_experience(id: &str, domain: &str, pattern: PatternType) -> Experience {
         Experience {
             experience_id: id.to_string(),
-            metadata: serde_json::json!({"created_by": "test"}),
+            metadata: ExperienceMetadata {
+                source_type: "test".to_string(),
+                source_snapshot_ids: None,
+                source_log_ids: None,
+                verification_count: 0,
+                last_used_at: None,
+                tags: None,
+            },
             content: ExperienceContent {
                 title: "Test Experience".to_string(),
                 summary: "A test experience entry".to_string(),
                 domain: domain.to_string(),
                 pattern,
+                confidence: 0.9,
                 context: serde_json::Value::Null,
                 knowledge: serde_json::Value::Null,
                 outcomes: serde_json::Value::Null,
             },
-            usage_stats: serde_json::json!({"access_count": 0}),
-            relationships: serde_json::json!({}),
+            usage_stats: ExperienceUsageStats {
+                access_count: 0,
+                last_accessed_at: None,
+                verification_count: 0,
+            },
+            relationships: ExperienceRelationships {
+                related_experience_ids: None,
+                contradicts_experience_ids: None,
+                refines_experience_ids: None,
+            },
         }
     }
 
@@ -402,6 +640,7 @@ mod tests {
                 make_belief_state(),
                 make_intention_state(),
                 make_attention_state(),
+                "manual",
                 "test trigger",
             )
             .await
@@ -415,7 +654,7 @@ mod tests {
         assert!(result.write_duration_ms >= 0);
 
         let restored = store
-            .restore_snapshot(&result.snapshot_id, true)
+            .restore_snapshot(&result.snapshot_id, StateTarget::Full, true)
             .await
             .unwrap();
 
@@ -431,7 +670,7 @@ mod tests {
         let config = temp_config();
         let store = ExternalMemoryStore::open(config).await.unwrap();
 
-        let result = store.restore_snapshot("nonexistent-snapshot", false).await;
+        let result = store.restore_snapshot("nonexistent-snapshot", StateTarget::Full, false).await;
         assert!(result.is_err());
 
         let _ = store.close().await;
@@ -449,6 +688,7 @@ mod tests {
                 make_belief_state(),
                 make_intention_state(),
                 make_attention_state(),
+                "automatic",
                 "automatic trigger",
             )
             .await
@@ -471,6 +711,7 @@ mod tests {
                 make_belief_state(),
                 make_intention_state(),
                 make_attention_state(),
+                "error_recovery",
                 "error recovery trigger",
             )
             .await
@@ -493,6 +734,7 @@ mod tests {
                 serde_json::json!({"message": "hello world"}),
                 "greeting",
                 Some(0.85),
+                None,
             )
             .await
             .unwrap();
@@ -514,6 +756,7 @@ mod tests {
                 LogType::ToolCall,
                 serde_json::json!({"tool": "search", "query": "test"}),
                 "tool_usage",
+                None,
                 None,
             )
             .await
@@ -545,6 +788,7 @@ mod tests {
                     serde_json::json!({"type": format!("{:?}", log_type)}),
                     "multi_type",
                     Some(0.5),
+                    None,
                 )
                 .await
                 .unwrap();
@@ -640,6 +884,7 @@ mod tests {
                 serde_json::json!({"msg": "test"}),
                 "test_topic",
                 Some(0.5),
+                None,
             )
             .await
             .unwrap();
@@ -686,6 +931,7 @@ mod tests {
                 make_belief_state(),
                 make_intention_state(),
                 make_attention_state(),
+                "manual",
                 "test",
             )
             .await
@@ -698,6 +944,7 @@ mod tests {
                 serde_json::json!({"msg": "hello"}),
                 "greeting",
                 Some(0.8),
+                None,
             )
             .await
             .unwrap();
@@ -709,6 +956,7 @@ mod tests {
                 serde_json::json!({"tool": "search"}),
                 "tool_usage",
                 Some(0.7),
+                None,
             )
             .await
             .unwrap();
@@ -762,6 +1010,7 @@ mod tests {
                 make_belief_state(),
                 make_intention_state(),
                 make_attention_state(),
+                "manual",
                 "first snapshot",
             )
             .await
@@ -774,6 +1023,7 @@ mod tests {
                 make_belief_state(),
                 make_intention_state(),
                 make_attention_state(),
+                "automatic",
                 "second snapshot",
             )
             .await
@@ -782,13 +1032,13 @@ mod tests {
         assert_ne!(snap1.snapshot_id, snap2.snapshot_id);
 
         let restored1 = store
-            .restore_snapshot(&snap1.snapshot_id, false)
+            .restore_snapshot(&snap1.snapshot_id, StateTarget::Full, false)
             .await
             .unwrap();
         assert!(restored1.restored);
 
         let restored2 = store
-            .restore_snapshot(&snap2.snapshot_id, false)
+            .restore_snapshot(&snap2.snapshot_id, StateTarget::Full, false)
             .await
             .unwrap();
         assert!(restored2.restored);
@@ -808,19 +1058,20 @@ mod tests {
                 make_belief_state(),
                 make_intention_state(),
                 make_attention_state(),
+                "scheduled",
                 "checksum test",
             )
             .await
             .unwrap();
 
         let restored_with_validation = store
-            .restore_snapshot(&result.snapshot_id, true)
+            .restore_snapshot(&result.snapshot_id, StateTarget::Full, true)
             .await
             .unwrap();
         assert!(restored_with_validation.restored);
 
         let restored_without_validation = store
-            .restore_snapshot(&result.snapshot_id, false)
+            .restore_snapshot(&result.snapshot_id, StateTarget::Full, false)
             .await
             .unwrap();
         assert!(restored_without_validation.restored);
@@ -843,6 +1094,7 @@ mod tests {
                 make_belief_state(),
                 make_intention_state(),
                 make_attention_state(),
+                "manual",
                 "stats test",
             )
             .await
@@ -887,6 +1139,7 @@ mod tests {
                 serde_json::json!({"key": "value"}),
                 "stats_topic",
                 Some(0.9),
+                None,
             )
             .await
             .unwrap();
@@ -909,13 +1162,14 @@ mod tests {
                 make_belief_state(),
                 make_intention_state(),
                 make_attention_state(),
+                "manual",
                 "workflow test snapshot",
             )
             .await
             .unwrap();
 
         let restored = store
-            .restore_snapshot(&snap_result.snapshot_id, true)
+            .restore_snapshot(&snap_result.snapshot_id, StateTarget::Full, true)
             .await
             .unwrap();
         assert!(restored.restored);
@@ -927,6 +1181,7 @@ mod tests {
                 serde_json::json!({"step": "workflow test"}),
                 "workflow",
                 Some(0.75),
+                None,
             )
             .await
             .unwrap();

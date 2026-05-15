@@ -44,6 +44,7 @@ pub mod types;
 
 pub use cleanup::CleanupEngine;
 pub use error::{MemoryError, Result};
+pub use events::EventSeverity;
 pub use storage::{ExperienceRow, MemoryIndexRow, SnapshotRow, SqliteStorage};
 pub use store::ExternalMemoryStore;
 pub use types::*;

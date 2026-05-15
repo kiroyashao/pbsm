@@ -21,7 +21,7 @@ impl ContextRetriever {
         }
     }
 
-    pub async fn retrieve(
+    pub fn retrieve(
         &self,
         current_beliefs: &[BeliefContext],
         _intent_description: &str,
@@ -44,13 +44,11 @@ impl ContextRetriever {
 
             let experiences = self
                 .experience_layer
-                .query_by_domain(&gap.topic, None)
-                .await?;
+                .query_by_domain(&gap.topic, None)?;
 
             let snapshots = self
                 .snapshot_layer
                 .list_snapshots(None)
-                .await
                 .unwrap_or_default();
 
             let mut assertions = Vec::new();
@@ -85,7 +83,8 @@ impl ContextRetriever {
             let matching_snapshots: Vec<_> = snapshots
                 .iter()
                 .filter(|s| {
-                    s.trigger_description
+                    s.trigger
+                        .description
                         .to_lowercase()
                         .contains(&gap.topic.to_lowercase())
                 })

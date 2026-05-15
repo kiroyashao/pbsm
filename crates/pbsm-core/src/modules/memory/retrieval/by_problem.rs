@@ -17,10 +17,11 @@ impl ProblemRetriever {
         }
     }
 
-    pub async fn retrieve(
+    pub fn retrieve(
         &self,
         problem_description: &str,
         problem_type: Option<ProblemType>,
+        context_constraints: Option<ContextConstraints>,
         similar_solution_limit: usize,
     ) -> Result<ProblemRetrievalResult> {
         let inferred_type =
@@ -29,15 +30,43 @@ impl ProblemRetriever {
         let domain = Self::problem_type_to_domain(&inferred_type);
         let pattern = Self::problem_type_to_pattern(&inferred_type);
 
-        let mut experiences = self.experience_layer.query_by_domain(&domain, None).await?;
+        let mut experiences = self.experience_layer.query_by_domain(&domain, None)?;
 
-        if let Ok(pattern_experiences) = self.experience_layer.query_by_pattern_type(&pattern).await
-        {
+        if let Ok(pattern_experiences) = self.experience_layer.query_by_pattern_type(&pattern) {
             for exp in pattern_experiences {
                 if !experiences.iter().any(|e| e.entry_id == exp.entry_id) {
                     experiences.push(exp);
                 }
             }
+        }
+
+        if let Some(constraints) = &context_constraints {
+            experiences.retain(|e| {
+                if e.content.as_object().is_none() {
+                    return true;
+                }
+                let matches_domain = e.summary.to_lowercase().contains(&constraints.current_domain.to_lowercase());
+                if !matches_domain && !constraints.current_domain.is_empty() {
+                    return false;
+                }
+                if let Some(excluded) = &constraints.excluded_topics {
+                    let summary_lower = e.summary.to_lowercase();
+                    for topic in excluded {
+                        if summary_lower.contains(&topic.to_lowercase()) {
+                            return false;
+                        }
+                    }
+                }
+                if let Some(max_days) = constraints.max_recency_days {
+                    let created_at_ms = e.created_at.timestamp_millis();
+                    let age_ms = chrono::Utc::now().timestamp_millis() - created_at_ms;
+                    let age_days = age_ms as f64 / 86_400_000.0;
+                    if age_days > max_days as f64 {
+                        return false;
+                    }
+                }
+                true
+            });
         }
 
         let mut similar_problems: Vec<SimilarProblemCase> = experiences

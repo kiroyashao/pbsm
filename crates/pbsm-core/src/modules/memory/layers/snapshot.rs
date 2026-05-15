@@ -21,9 +21,9 @@ impl SnapshotLayer {
         }
     }
 
-    pub async fn write_snapshot(
+    pub fn write_snapshot(
         &self,
-        metadata: SnapshotMetadata,
+        mut metadata: SnapshotMetadata,
         belief_state: BeliefState,
         intention_state: IntentionState,
         attention_state: AttentionState,
@@ -47,6 +47,15 @@ impl SnapshotLayer {
 
         let checksum = Self::compute_checksum(&compressed);
 
+        let compression_ratio = if file_size > 0 {
+            compressed_size as f64 / file_size as f64
+        } else {
+            1.0
+        };
+
+        metadata.checksum = Some(checksum.clone());
+        metadata.compression_ratio = Some(compression_ratio);
+
         let file_path = self
             .config
             .storage_path
@@ -67,18 +76,13 @@ impl SnapshotLayer {
                 .trim_matches('"'),
             &file_path,
             compressed_size as i64,
-            &checksum,
+            metadata.checksum.as_deref().unwrap_or(""),
             snapshot.belief_state.nodes.len() as i32,
             snapshot.belief_state.edges.len() as i32,
-            &metadata.trigger_description,
+            &metadata.trigger.description,
         )?;
 
         let duration_ms = start.elapsed().as_millis() as i64;
-        let compression_ratio = if file_size > 0 {
-            compressed_size as f64 / file_size as f64
-        } else {
-            1.0
-        };
 
         Ok(WriteSnapshotResult {
             snapshot_id: metadata.snapshot_id,
@@ -93,9 +97,10 @@ impl SnapshotLayer {
         })
     }
 
-    pub async fn restore_snapshot(
+    pub fn restore_snapshot(
         &self,
         snapshot_id: &str,
+        target_state: StateTarget,
         validate_checksum: bool,
     ) -> Result<RestoreSnapshotResult> {
         let start = std::time::Instant::now();
@@ -119,7 +124,36 @@ impl SnapshotLayer {
         }
 
         let json = Self::decompress(&compressed)?;
-        let snapshot: FullSnapshot = serde_json::from_slice(&json)?;
+        let mut snapshot: FullSnapshot = serde_json::from_slice(&json)?;
+
+        match target_state {
+            StateTarget::BeliefOnly => {
+                snapshot.intention_state = IntentionState {
+                    stack: vec![],
+                    active_goal_pointer: 0,
+                    execution_depth: 0,
+                };
+                snapshot.attention_state = AttentionState {
+                    parameter: 0.5,
+                    mode: AttentionMode::Moderate,
+                    focus_areas: vec![],
+                };
+            }
+            StateTarget::IntentionOnly => {
+                snapshot.belief_state = BeliefState {
+                    nodes: vec![],
+                    edges: vec![],
+                    active_predictions: vec![],
+                    unresolved_residuals: vec![],
+                };
+                snapshot.attention_state = AttentionState {
+                    parameter: 0.5,
+                    mode: AttentionMode::Moderate,
+                    focus_areas: vec![],
+                };
+            }
+            StateTarget::Full => {}
+        }
 
         let duration_ms = start.elapsed().as_millis() as i64;
 
@@ -127,41 +161,14 @@ impl SnapshotLayer {
             snapshot,
             restored: true,
             duration_ms,
+            target_state,
         })
     }
 
-    pub async fn list_snapshots(&self, session_id: Option<&str>) -> Result<Vec<SnapshotMetadata>> {
+    pub fn list_snapshots(&self, session_id: Option<&str>) -> Result<Vec<SnapshotMetadata>> {
         let rows = match session_id {
             Some(sid) => self.sqlite.query_snapshots_by_session(sid)?,
-            None => {
-                let conn = self.sqlite.get_connection();
-                let conn = conn.lock();
-                let mut stmt = conn
-                    .prepare("SELECT snapshot_id, session_id, created_at, snapshot_type, file_path, file_size, checksum, node_count, edge_count, parent_snapshot_id, trigger_description FROM snapshots ORDER BY created_at DESC")
-                    .map_err(|e| MemoryError::ReadFailed(e.to_string()))?;
-                let row_iter = stmt
-                    .query_map([], |row| {
-                        Ok(crate::modules::memory::storage::sqlite::SnapshotRow {
-                            snapshot_id: row.get(0)?,
-                            session_id: row.get(1)?,
-                            created_at: row.get(2)?,
-                            snapshot_type: row.get(3)?,
-                            file_path: row.get(4)?,
-                            file_size: row.get(5)?,
-                            checksum: row.get(6)?,
-                            node_count: row.get(7)?,
-                            edge_count: row.get(8)?,
-                            parent_snapshot_id: row.get(9)?,
-                            trigger_description: row.get(10)?,
-                        })
-                    })
-                    .map_err(|e| MemoryError::ReadFailed(e.to_string()))?;
-                let mut result = Vec::new();
-                for row in row_iter {
-                    result.push(row.map_err(|e| MemoryError::ReadFailed(e.to_string()))?);
-                }
-                result
-            }
+            None => self.sqlite.query_all_snapshots()?,
         };
 
         let mut snapshots = Vec::with_capacity(rows.len());
@@ -175,14 +182,20 @@ impl SnapshotLayer {
                 version: "1.0".to_string(),
                 snapshot_type,
                 agent_id: String::new(),
-                trigger_description: row.trigger_description.unwrap_or_default(),
+                trigger: SnapshotTrigger {
+                    event_type: "unknown".to_string(),
+                    event_id: None,
+                    description: row.trigger_description.unwrap_or_default(),
+                },
                 created_at: row.created_at,
+                checksum: if row.checksum.is_empty() { None } else { Some(row.checksum) },
+                compression_ratio: None,
             });
         }
         Ok(snapshots)
     }
 
-    pub async fn delete_snapshot(&self, snapshot_id: &str) -> Result<bool> {
+    pub fn delete_snapshot(&self, snapshot_id: &str) -> Result<bool> {
         let sled_removed = self.sled.remove_snapshot(snapshot_id)?;
         let sqlite_deleted = self.sqlite.delete_snapshot(snapshot_id)?;
         Ok(sled_removed || sqlite_deleted)
@@ -238,8 +251,14 @@ mod tests {
             version: "1.0".to_string(),
             snapshot_type: SnapshotType::Manual,
             agent_id: "agent-1".to_string(),
-            trigger_description: "test snapshot".to_string(),
+            trigger: SnapshotTrigger {
+                event_type: "manual".to_string(),
+                event_id: None,
+                description: "test snapshot".to_string(),
+            },
             created_at: Utc::now().timestamp_millis(),
+            checksum: None,
+            compression_ratio: None,
         }
     }
 
@@ -268,8 +287,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_write_snapshot_no_compression() {
+    #[test]
+    fn test_write_snapshot_no_compression() {
         let (sqlite, sled, config) = setup();
         let layer = SnapshotLayer::new(sqlite, sled, config);
 
@@ -281,7 +300,6 @@ mod tests {
                 make_attention_state(),
                 CompressionType::None,
             )
-            .await
             .unwrap();
 
         assert_eq!(result.snapshot_id, "snap-001");
@@ -289,8 +307,8 @@ mod tests {
         assert!(result.compression_ratio > 0.0);
     }
 
-    #[tokio::test]
-    async fn test_write_snapshot_lz4() {
+    #[test]
+    fn test_write_snapshot_lz4() {
         let (sqlite, sled, config) = setup();
         let layer = SnapshotLayer::new(sqlite, sled, config);
 
@@ -302,15 +320,14 @@ mod tests {
                 make_attention_state(),
                 CompressionType::Lz4,
             )
-            .await
             .unwrap();
 
         assert_eq!(result.snapshot_id, "snap-002");
         assert!(result.compressed_size > 0);
     }
 
-    #[tokio::test]
-    async fn test_write_snapshot_zstd() {
+    #[test]
+    fn test_write_snapshot_zstd() {
         let (sqlite, sled, config) = setup();
         let layer = SnapshotLayer::new(sqlite, sled, config);
 
@@ -322,15 +339,14 @@ mod tests {
                 make_attention_state(),
                 CompressionType::Zstd,
             )
-            .await
             .unwrap();
 
         assert_eq!(result.snapshot_id, "snap-003");
         assert!(result.compressed_size > 0);
     }
 
-    #[tokio::test]
-    async fn test_restore_snapshot_with_checksum_validation() {
+    #[test]
+    fn test_restore_snapshot_with_checksum_validation() {
         let (sqlite, sled, config) = setup();
         let layer = SnapshotLayer::new(sqlite, sled, config);
 
@@ -342,16 +358,15 @@ mod tests {
                 make_attention_state(),
                 CompressionType::None,
             )
-            .await
             .unwrap();
 
-        let result = layer.restore_snapshot("snap-010", true).await.unwrap();
+        let result = layer.restore_snapshot("snap-010", StateTarget::Full, true).unwrap();
         assert!(result.restored);
         assert_eq!(result.snapshot.metadata.snapshot_id, "snap-010");
     }
 
-    #[tokio::test]
-    async fn test_restore_snapshot_without_checksum() {
+    #[test]
+    fn test_restore_snapshot_without_checksum() {
         let (sqlite, sled, config) = setup();
         let layer = SnapshotLayer::new(sqlite, sled, config);
 
@@ -363,24 +378,23 @@ mod tests {
                 make_attention_state(),
                 CompressionType::Lz4,
             )
-            .await
             .unwrap();
 
-        let result = layer.restore_snapshot("snap-011", false).await.unwrap();
+        let result = layer.restore_snapshot("snap-011", StateTarget::Full, false).unwrap();
         assert!(result.restored);
     }
 
-    #[tokio::test]
-    async fn test_restore_snapshot_not_found() {
+    #[test]
+    fn test_restore_snapshot_not_found() {
         let (sqlite, sled, config) = setup();
         let layer = SnapshotLayer::new(sqlite, sled, config);
 
-        let result = layer.restore_snapshot("nonexistent", false).await;
+        let result = layer.restore_snapshot("nonexistent", StateTarget::Full, false);
         assert!(result.is_err());
     }
 
-    #[tokio::test]
-    async fn test_list_snapshots_by_session() {
+    #[test]
+    fn test_list_snapshots_by_session() {
         let (sqlite, sled, config) = setup();
         let layer = SnapshotLayer::new(sqlite, sled, config);
 
@@ -392,7 +406,6 @@ mod tests {
                 make_attention_state(),
                 CompressionType::None,
             )
-            .await
             .unwrap();
         layer
             .write_snapshot(
@@ -402,7 +415,6 @@ mod tests {
                 make_attention_state(),
                 CompressionType::None,
             )
-            .await
             .unwrap();
         layer
             .write_snapshot(
@@ -412,18 +424,17 @@ mod tests {
                 make_attention_state(),
                 CompressionType::None,
             )
-            .await
             .unwrap();
 
-        let snapshots = layer.list_snapshots(Some("sess-001")).await.unwrap();
+        let snapshots = layer.list_snapshots(Some("sess-001")).unwrap();
         assert_eq!(snapshots.len(), 2);
 
-        let snapshots = layer.list_snapshots(Some("sess-002")).await.unwrap();
+        let snapshots = layer.list_snapshots(Some("sess-002")).unwrap();
         assert_eq!(snapshots.len(), 1);
     }
 
-    #[tokio::test]
-    async fn test_list_all_snapshots() {
+    #[test]
+    fn test_list_all_snapshots() {
         let (sqlite, sled, config) = setup();
         let layer = SnapshotLayer::new(sqlite, sled, config);
 
@@ -435,7 +446,6 @@ mod tests {
                 make_attention_state(),
                 CompressionType::None,
             )
-            .await
             .unwrap();
         layer
             .write_snapshot(
@@ -445,15 +455,14 @@ mod tests {
                 make_attention_state(),
                 CompressionType::None,
             )
-            .await
             .unwrap();
 
-        let snapshots = layer.list_snapshots(None).await.unwrap();
+        let snapshots = layer.list_snapshots(None).unwrap();
         assert_eq!(snapshots.len(), 2);
     }
 
-    #[tokio::test]
-    async fn test_delete_snapshot() {
+    #[test]
+    fn test_delete_snapshot() {
         let (sqlite, sled, config) = setup();
         let layer = SnapshotLayer::new(sqlite, sled, config);
 
@@ -465,18 +474,17 @@ mod tests {
                 make_attention_state(),
                 CompressionType::None,
             )
-            .await
             .unwrap();
 
-        let deleted = layer.delete_snapshot("snap-040").await.unwrap();
+        let deleted = layer.delete_snapshot("snap-040").unwrap();
         assert!(deleted);
 
-        let deleted_again = layer.delete_snapshot("snap-040").await.unwrap();
+        let deleted_again = layer.delete_snapshot("snap-040").unwrap();
         assert!(!deleted_again);
     }
 
-    #[tokio::test]
-    async fn test_write_snapshot_duration() {
+    #[test]
+    fn test_write_snapshot_duration() {
         let (sqlite, sled, config) = setup();
         let layer = SnapshotLayer::new(sqlite, sled, config);
 
@@ -488,7 +496,6 @@ mod tests {
                 make_attention_state(),
                 CompressionType::Lz4,
             )
-            .await
             .unwrap();
 
         assert!(result.write_duration_ms >= 0);

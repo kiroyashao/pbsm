@@ -31,7 +31,7 @@ impl TopicRetriever {
         }
     }
 
-    pub async fn retrieve(
+    pub fn retrieve(
         &self,
         topic: &str,
         confidence_threshold: Option<f64>,
@@ -70,8 +70,7 @@ impl TopicRetriever {
             indexes_used.push("experience_domain_index".to_string());
             let experiences = self
                 .experience_layer
-                .query_by_domain(topic, confidence_threshold)
-                .await?;
+                .query_by_domain(topic, confidence_threshold)?;
             for mut exp in experiences {
                 let topic_lower = topic.to_lowercase();
                 let relevance = if exp.summary.to_lowercase().contains(&topic_lower) {
@@ -86,11 +85,12 @@ impl TopicRetriever {
 
         if layers.contains(&MemoryLayer::Snapshot) {
             indexes_used.push("snapshot_trigger_index".to_string());
-            let snapshots = self.snapshot_layer.list_snapshots(None).await?;
+            let snapshots = self.snapshot_layer.list_snapshots(None)?;
             for snap_meta in snapshots {
                 let topic_lower = topic.to_lowercase();
                 if !snap_meta
-                    .trigger_description
+                    .trigger
+                    .description
                     .to_lowercase()
                     .contains(&topic_lower)
                 {
@@ -99,7 +99,8 @@ impl TopicRetriever {
                 let relevance = 0.4
                     + 0.3
                         * (snap_meta
-                            .trigger_description
+                            .trigger
+                            .description
                             .to_lowercase()
                             .contains(&topic_lower) as u8 as f64);
                 let entry = MemoryEntry {
@@ -108,7 +109,9 @@ impl TopicRetriever {
                     memory_type: format!("{:?}", snap_meta.snapshot_type),
                     relevance_score: relevance,
                     confidence: 0.7,
-                    summary: snap_meta.trigger_description.clone(),
+                    importance: 0.0,
+                    recency_score: 0.0,
+                    summary: snap_meta.trigger.description.clone(),
                     content: serde_json::to_value(&snap_meta).unwrap_or(serde_json::Value::Null),
                     source_references: vec![SourceReference {
                         ref_type: "snapshot".to_string(),
@@ -133,8 +136,7 @@ impl TopicRetriever {
             indexes_used.push("raw_log_topic_index".to_string());
             let logs = self
                 .raw_log_layer
-                .query_by_topic(topic, confidence_threshold, limit)
-                .await?;
+                .query_by_topic(topic, confidence_threshold, limit)?;
             for mut log in logs {
                 log.relevance_score = 0.3 + log.confidence * 0.2;
                 all_entries.push(log);
@@ -145,11 +147,37 @@ impl TopicRetriever {
             all_entries.retain(|e| e.confidence >= threshold);
         }
 
-        all_entries.sort_by(|a, b| {
-            b.relevance_score
-                .partial_cmp(&a.relevance_score)
-                .unwrap_or(std::cmp::Ordering::Equal)
+        let now_ms = chrono::Utc::now().timestamp_millis();
+
+        // Precompute diversity scores before consuming all_entries to avoid borrow conflict
+        let diversity_scores: std::collections::HashMap<String, f64> = all_entries
+            .iter()
+            .map(|e| {
+                let same_layer_count = all_entries
+                    .iter()
+                    .filter(|o| o.layer == e.layer && o.entry_id != e.entry_id)
+                    .count();
+                let diversity = if all_entries.len() <= 1 {
+                    1.0
+                } else {
+                    1.0 - (same_layer_count as f64 / (all_entries.len() as f64 - 1.0)).min(1.0)
+                };
+                (e.entry_id.clone(), diversity)
+            })
+            .collect();
+
+        let mut scored: Vec<(f64, MemoryEntry)> = all_entries
+            .into_iter()
+            .map(|e| {
+                let diversity = *diversity_scores.get(&e.entry_id).unwrap_or(&1.0);
+                let score = Self::compute_composite_score(&e, diversity, now_ms);
+                (score, e)
+            })
+            .collect();
+        scored.sort_by(|a, b| {
+            b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
         });
+        let all_entries: Vec<MemoryEntry> = scored.into_iter().map(|(_, e)| e).collect();
 
         let total_matches = all_entries.len();
         let paginated: Vec<MemoryEntry> =
@@ -181,6 +209,33 @@ impl TopicRetriever {
         }
 
         Ok(result)
+    }
+
+    fn compute_composite_score(
+        entry: &MemoryEntry,
+        diversity: f64,
+        now_ms: i64,
+    ) -> f64 {
+        let w_relevance = 0.35;
+        let w_confidence = 0.25;
+        let w_recency = 0.20;
+        let w_importance = 0.10;
+        let w_diversity = 0.10;
+
+        let relevance = entry.relevance_score;
+        let confidence = entry.confidence;
+
+        let created_at_ms = entry.created_at.timestamp_millis();
+        let age_ms = (now_ms - created_at_ms).max(1);
+        let recency = 1.0 / (1.0 + (age_ms as f64 / 86_400_000.0).ln_1p());
+
+        let importance = entry.importance;
+
+        w_relevance * relevance
+            + w_confidence * confidence
+            + w_recency * recency
+            + w_importance * importance
+            + w_diversity * diversity
     }
 }
 
@@ -225,6 +280,8 @@ mod tests {
                 memory_type: "pattern".to_string(),
                 relevance_score: 0.9,
                 confidence: 0.8,
+                importance: 0.0,
+                recency_score: 0.0,
                 summary: "high confidence".to_string(),
                 content: serde_json::Value::Null,
                 source_references: vec![],
@@ -237,6 +294,8 @@ mod tests {
                 memory_type: "dialogue".to_string(),
                 relevance_score: 0.5,
                 confidence: 0.3,
+                importance: 0.0,
+                recency_score: 0.0,
                 summary: "low confidence".to_string(),
                 content: serde_json::Value::Null,
                 source_references: vec![],
@@ -259,6 +318,8 @@ mod tests {
                 memory_type: "pattern".to_string(),
                 relevance_score: 0.5,
                 confidence: 0.8,
+                importance: 0.0,
+                recency_score: 0.0,
                 summary: "medium".to_string(),
                 content: serde_json::Value::Null,
                 source_references: vec![],
@@ -271,6 +332,8 @@ mod tests {
                 memory_type: "snapshot".to_string(),
                 relevance_score: 0.9,
                 confidence: 0.7,
+                importance: 0.0,
+                recency_score: 0.0,
                 summary: "high".to_string(),
                 content: serde_json::Value::Null,
                 source_references: vec![],
@@ -283,6 +346,8 @@ mod tests {
                 memory_type: "log".to_string(),
                 relevance_score: 0.3,
                 confidence: 0.5,
+                importance: 0.0,
+                recency_score: 0.0,
                 summary: "low".to_string(),
                 content: serde_json::Value::Null,
                 source_references: vec![],

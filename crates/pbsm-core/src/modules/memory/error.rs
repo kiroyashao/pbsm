@@ -66,6 +66,9 @@ pub enum MemoryError {
     #[error("Compression failed: {0} (code: OPR_002)")]
     CompressionFailed(String),
 
+    #[error("Blocking task failed: {0} (code: OPR_E003)")]
+    BlockingTaskFailed(String),
+
     #[error("Experience not found: {0} (code: NFD_004)")]
     ExperienceNotFound(String),
 

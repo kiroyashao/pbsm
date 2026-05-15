@@ -206,6 +206,21 @@ impl SqliteStorage {
         Ok(result)
     }
 
+    pub fn query_all_snapshots(&self) -> Result<Vec<SnapshotRow>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare("SELECT snapshot_id, session_id, created_at, snapshot_type, file_path, file_size, checksum, node_count, edge_count, parent_snapshot_id, trigger_description FROM snapshots ORDER BY created_at DESC")
+            .map_err(|e| MemoryError::ReadFailed(e.to_string()))?;
+        let rows = stmt
+            .query_map([], map_snapshot_row)
+            .map_err(|e| MemoryError::ReadFailed(e.to_string()))?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row.map_err(|e| MemoryError::ReadFailed(e.to_string()))?);
+        }
+        Ok(result)
+    }
+
     pub fn query_snapshots_by_type(&self, snapshot_type: &str) -> Result<Vec<SnapshotRow>> {
         let conn = self.conn.lock();
         let mut stmt = conn

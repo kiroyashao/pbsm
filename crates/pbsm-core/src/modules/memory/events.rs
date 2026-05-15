@@ -87,7 +87,7 @@ pub fn create_snapshot_created_event(
     size_bytes: u64,
 ) -> MemoryEvent {
     new_event(
-        "MEM_EVT_001",
+        "MEM001",
         "memory.snapshotCreated",
         EventSeverity::Info,
         serde_json::json!({
@@ -100,7 +100,7 @@ pub fn create_snapshot_created_event(
 
 pub fn create_snapshot_restored_event(snapshot_id: &str, duration_ms: u64) -> MemoryEvent {
     new_event(
-        "MEM_EVT_002",
+        "MEM004",
         "memory.snapshotRestored",
         EventSeverity::Info,
         serde_json::json!({
@@ -117,7 +117,7 @@ pub fn create_retrieval_completed_event(
     cache_hit: bool,
 ) -> MemoryEvent {
     new_event(
-        "MEM_EVT_003",
+        "MEM002",
         "memory.retrievalCompleted",
         EventSeverity::Info,
         serde_json::json!({
@@ -136,7 +136,7 @@ pub fn create_cleanup_completed_event(
     freed_bytes: u64,
 ) -> MemoryEvent {
     new_event(
-        "MEM_EVT_004",
+        "MEM006",
         "memory.cleanupCompleted",
         EventSeverity::Info,
         serde_json::json!({
@@ -154,7 +154,7 @@ pub fn create_storage_warning_event(
     layer: &str,
 ) -> MemoryEvent {
     new_event(
-        "MEM_EVT_005",
+        "MEM005",
         "memory.storageWarning",
         EventSeverity::Warning,
         serde_json::json!({
@@ -171,7 +171,7 @@ pub fn create_experience_created_event(
     confidence: f64,
 ) -> MemoryEvent {
     new_event(
-        "MEM_EVT_006",
+        "MEM003",
         "memory.experienceCreated",
         EventSeverity::Info,
         serde_json::json!({
@@ -180,6 +180,71 @@ pub fn create_experience_created_event(
             "confidence": confidence,
         }),
     )
+}
+
+pub fn create_memory_modified_event(
+    entry_id: &str,
+    layer: &str,
+    operation: &str,
+) -> MemoryEvent {
+    new_event(
+        "MEM_AUDIT_001",
+        "memory.memoryModified",
+        EventSeverity::Info,
+        serde_json::json!({
+            "entry_id": entry_id,
+            "layer": layer,
+            "operation": operation,
+        }),
+    )
+}
+
+pub fn create_cleanup_executed_event(
+    cleanup_id: &str,
+    deleted_count: usize,
+    archived_count: usize,
+) -> MemoryEvent {
+    new_event(
+        "MEM_AUDIT_002",
+        "memory.cleanupExecuted",
+        EventSeverity::Info,
+        serde_json::json!({
+            "cleanup_id": cleanup_id,
+            "deleted_count": deleted_count,
+            "archived_count": archived_count,
+        }),
+    )
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ExternalEvent {
+    SnapshotRequested {
+        session_id: String,
+        trigger_type: String,
+        trigger_description: String,
+    },
+    ForgetTriggered {
+        target_layers: Vec<String>,
+        reason: String,
+    },
+    ForgetCompleted {
+        deleted_count: usize,
+    },
+    BeliefGraphChanged {
+        change_type: String,
+        node_ids: Vec<String>,
+    },
+}
+
+pub trait ExternalEventSubscriber: Send + Sync {
+    fn on_external_event(&self, event: ExternalEvent);
+}
+
+pub struct NullExternalEventSubscriber;
+
+impl ExternalEventSubscriber for NullExternalEventSubscriber {
+    fn on_external_event(&self, _event: ExternalEvent) {}
 }
 
 #[cfg(test)]
@@ -197,7 +262,7 @@ mod tests {
     #[test]
     fn test_snapshot_created_event() {
         let event = create_snapshot_created_event("snap-001", "full", 4096);
-        assert_eq!(event.event_code, "MEM_EVT_001");
+        assert_eq!(event.event_code, "MEM001");
         assert_eq!(event.event_type, "memory.snapshotCreated");
         assert_eq!(event.source_module, "M4");
         assert_eq!(event.severity, EventSeverity::Info);
@@ -214,7 +279,7 @@ mod tests {
     #[test]
     fn test_snapshot_restored_event() {
         let event = create_snapshot_restored_event("snap-002", 150);
-        assert_eq!(event.event_code, "MEM_EVT_002");
+        assert_eq!(event.event_code, "MEM004");
         assert_eq!(event.event_type, "memory.snapshotRestored");
         assert_eq!(event.severity, EventSeverity::Info);
 
@@ -226,7 +291,7 @@ mod tests {
     #[test]
     fn test_retrieval_completed_event() {
         let event = create_retrieval_completed_event("semantic", 5, 42, true);
-        assert_eq!(event.event_code, "MEM_EVT_003");
+        assert_eq!(event.event_code, "MEM002");
         assert_eq!(event.event_type, "memory.retrievalCompleted");
 
         let data = &event.event_data;
@@ -239,7 +304,7 @@ mod tests {
     #[test]
     fn test_cleanup_completed_event() {
         let event = create_cleanup_completed_event("ttl", 10, 3, 8192);
-        assert_eq!(event.event_code, "MEM_EVT_004");
+        assert_eq!(event.event_code, "MEM006");
         assert_eq!(event.event_type, "memory.cleanupCompleted");
 
         let data = &event.event_data;
@@ -252,7 +317,7 @@ mod tests {
     #[test]
     fn test_storage_warning_event() {
         let event = create_storage_warning_event(85.5, 80.0, "hot");
-        assert_eq!(event.event_code, "MEM_EVT_005");
+        assert_eq!(event.event_code, "MEM005");
         assert_eq!(event.event_type, "memory.storageWarning");
         assert_eq!(event.severity, EventSeverity::Warning);
 
@@ -265,7 +330,7 @@ mod tests {
     #[test]
     fn test_experience_created_event() {
         let event = create_experience_created_event("exp-001", "causal", 0.92);
-        assert_eq!(event.event_code, "MEM_EVT_006");
+        assert_eq!(event.event_code, "MEM003");
         assert_eq!(event.event_type, "memory.experienceCreated");
 
         let data = &event.event_data;

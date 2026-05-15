@@ -15,8 +15,9 @@ use pbsm_core::modules::intention_stack::types::{
 use pbsm_core::modules::memory::store::ExternalMemoryStore;
 use pbsm_core::modules::memory::types::{
     AttentionMode, AttentionState, BeliefState, CleanupPolicy, CleanupScope, CleanupType,
-    Experience, ExperienceContent, Intention, IntentionState, LogType, MemoryQuery, PatternType,
-    ProblemType, SnapshotType,
+    Experience, ExperienceContent, ExperienceMetadata, ExperienceRelationships,
+    ExperienceUsageStats, Intention, IntentionState, LogType, MemoryQuery, PatternType,
+    ProblemType, SnapshotType, StateTarget,
 };
 
 #[tokio::test]
@@ -80,6 +81,7 @@ async fn test_belief_state_snapshot_write_and_restore() {
             belief_state,
             intention_state,
             attention_state,
+            "manual",
             "belief graph snapshot test",
         )
         .await
@@ -89,7 +91,7 @@ async fn test_belief_state_snapshot_write_and_restore() {
     assert!(write_result.node_count >= 2);
 
     let restored = store
-        .restore_snapshot(&write_result.snapshot_id, true)
+        .restore_snapshot(&write_result.snapshot_id, StateTarget::Full, true)
         .await
         .unwrap();
 
@@ -184,13 +186,14 @@ async fn test_intention_state_in_snapshot() {
             belief_state,
             intention_state,
             attention_state,
+            "automatic",
             "intention state snapshot test",
         )
         .await
         .unwrap();
 
     let restored = store
-        .restore_snapshot(&write_result.snapshot_id, false)
+        .restore_snapshot(&write_result.snapshot_id, StateTarget::Full, false)
         .await
         .unwrap();
 
@@ -218,6 +221,7 @@ async fn test_memory_retrieval_by_topic() {
             serde_json::json!({"message": "hello"}),
             "greeting",
             Some(0.9),
+            None,
         )
         .await
         .unwrap();
@@ -229,6 +233,7 @@ async fn test_memory_retrieval_by_topic() {
             serde_json::json!({"tool": "search", "query": "rust"}),
             "tool_usage",
             Some(0.8),
+            None,
         )
         .await
         .unwrap();
@@ -240,6 +245,7 @@ async fn test_memory_retrieval_by_topic() {
             serde_json::json!({"message": "goodbye"}),
             "greeting",
             Some(0.7),
+            None,
         )
         .await
         .unwrap();
@@ -288,18 +294,34 @@ async fn test_experience_write_and_problem_retrieval() {
 
     let experience = Experience {
         experience_id: "exp-error-001".to_string(),
-        metadata: serde_json::json!({"created_by": "integration_test"}),
+        metadata: ExperienceMetadata {
+            source_type: "integration_test".to_string(),
+            source_snapshot_ids: None,
+            source_log_ids: None,
+            verification_count: 0,
+            last_used_at: None,
+            tags: None,
+        },
         content: ExperienceContent {
             title: "Tool Timeout Recovery".to_string(),
             summary: "How to recover from tool execution timeouts".to_string(),
             domain: "error_handling".to_string(),
             pattern: PatternType::ErrorHandling,
+            confidence: 0.9,
             context: serde_json::json!({"timeout_ms": 30000}),
             knowledge: serde_json::json!({"strategy": "retry_with_backoff"}),
             outcomes: serde_json::json!({"success_rate": 0.92}),
         },
-        usage_stats: serde_json::json!({"access_count": 0}),
-        relationships: serde_json::json!({}),
+        usage_stats: ExperienceUsageStats {
+            access_count: 0,
+            last_accessed_at: None,
+            verification_count: 0,
+        },
+        relationships: ExperienceRelationships {
+            related_experience_ids: None,
+            contradicts_experience_ids: None,
+            refines_experience_ids: None,
+        },
     };
 
     let write_result = store.write_experience(experience, false).await.unwrap();
@@ -310,6 +332,7 @@ async fn test_experience_write_and_problem_retrieval() {
         .retrieve_for_problem(
             "Tool execution timeout during search operation",
             Some(ProblemType::ToolExecutionFailure),
+            None,
         )
         .await
         .unwrap();
@@ -354,6 +377,7 @@ async fn test_cleanup_preserves_active_data() {
             belief_state,
             intention_state,
             attention_state,
+            "manual",
             "cleanup test snapshot",
         )
         .await
@@ -366,6 +390,7 @@ async fn test_cleanup_preserves_active_data() {
             serde_json::json!({"msg": "cleanup test log"}),
             "cleanup_topic",
             Some(0.6),
+            None,
         )
         .await
         .unwrap();

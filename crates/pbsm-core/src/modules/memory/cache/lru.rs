@@ -1,3 +1,4 @@
+use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -21,7 +22,7 @@ pub struct LruCache<V> {
     entries: HashMap<String, CacheEntry<V>>,
     capacity: usize,
     default_ttl: Duration,
-    access_order: Vec<String>,
+    access_order: IndexMap<String, ()>,
 }
 
 impl<V> LruCache<V> {
@@ -30,7 +31,7 @@ impl<V> LruCache<V> {
             entries: HashMap::new(),
             capacity,
             default_ttl,
-            access_order: Vec::new(),
+            access_order: IndexMap::new(),
         }
     }
 
@@ -46,8 +47,8 @@ impl<V> LruCache<V> {
         }
 
         if self.entries.len() >= self.capacity {
-            if let Some(lru_key) = self.access_order.first().cloned() {
-                self.remove(&lru_key);
+            if let Some((lru_key, _)) = self.access_order.shift_remove_index(0) {
+                self.entries.remove(&lru_key);
             }
         }
 
@@ -61,7 +62,7 @@ impl<V> LruCache<V> {
                 ttl: Some(ttl),
             },
         );
-        self.access_order.push(key);
+        self.access_order.insert(key, ());
 
         old_value
     }
@@ -102,7 +103,7 @@ impl<V> LruCache<V> {
 
     pub fn remove(&mut self, key: &str) -> Option<V> {
         self.entries.remove(key).map(|entry| {
-            self.access_order.retain(|k| k != key);
+            self.access_order.shift_remove(key);
             entry.value
         })
     }
@@ -147,8 +148,8 @@ impl<V> LruCache<V> {
     }
 
     fn touch_access_order(&mut self, key: &str) {
-        self.access_order.retain(|k| k != key);
-        self.access_order.push(key.to_string());
+        self.access_order.shift_remove(key);
+        self.access_order.insert(key.to_string(), ());
     }
 }
 

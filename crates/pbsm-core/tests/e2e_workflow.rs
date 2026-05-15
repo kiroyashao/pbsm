@@ -17,7 +17,7 @@ use pbsm_core::modules::memory::config::MemoryConfig;
 use pbsm_core::modules::memory::store::ExternalMemoryStore;
 use pbsm_core::modules::memory::types::{
     AttentionMode as MemoryAttentionMode, AttentionState, BeliefState, Intention, IntentionState,
-    IntentionStatus, SnapshotType,
+    IntentionStatus, SnapshotType, StateTarget,
 };
 use pbsm_core::modules::metacognition::controller::MetacognitiveController;
 use pbsm_core::modules::metacognition::types::{
@@ -303,6 +303,7 @@ async fn test_cross_session_recovery() {
                 make_belief_state(),
                 make_intention_state(),
                 make_attention_state(),
+                "manual",
                 "e2e cross-session test",
             )
             .await
@@ -322,7 +323,7 @@ async fn test_cross_session_recovery() {
     };
     let store2 = ExternalMemoryStore::open(config2).await.unwrap();
 
-    let restore_result = store2.restore_snapshot(&snapshot_id, true).await.unwrap();
+    let restore_result = store2.restore_snapshot(&snapshot_id, StateTarget::Full, true).await.unwrap();
     assert!(restore_result.restored);
 
     let restored_snapshot = restore_result.snapshot;
@@ -474,13 +475,14 @@ async fn test_active_forgetting_convergence() {
             force_flag: None,
             reason: ForgetReason::LowValue,
         })
+        .await
         .unwrap();
 
     assert!(
         forget_result
             .forgotten_ids
             .contains(&"low_value_1".to_string())
-            || forget_result
+        || forget_result
                 .forgotten_ids
                 .contains(&"low_value_2".to_string())
     );

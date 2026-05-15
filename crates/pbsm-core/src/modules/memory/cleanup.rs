@@ -60,7 +60,7 @@ impl CleanupEngine {
             + residual_penalty
     }
 
-    pub async fn cleanup_expired(&self, policy: CleanupPolicy) -> Result<CleanupResult> {
+    pub fn cleanup_expired(&self, policy: CleanupPolicy) -> Result<CleanupResult> {
         let cleanup_id = Uuid::new_v4().to_string();
         let start_time = Utc::now().timestamp_millis();
 
@@ -75,40 +75,40 @@ impl CleanupEngine {
 
         match policy.scope {
             CleanupScope::RawLogOnly => {
-                let stats = self.cleanup_raw_logs(cutoff_time, &policy).await?;
+                let stats = self.cleanup_raw_logs(cutoff_time, &policy)?;
                 total_scanned += stats.scanned;
                 total_deleted += stats.deleted;
                 total_archived += stats.archived;
                 total_freed_bytes += stats.freed_bytes;
             }
             CleanupScope::SnapshotOnly => {
-                let stats = self.cleanup_snapshots(cutoff_time, &policy).await?;
+                let stats = self.cleanup_snapshots(cutoff_time, &policy)?;
                 total_scanned += stats.scanned;
                 total_deleted += stats.deleted;
                 total_archived += stats.archived;
                 total_freed_bytes += stats.freed_bytes;
             }
             CleanupScope::ExperienceOnly => {
-                let stats = self.cleanup_experiences(cutoff_time, &policy).await?;
+                let stats = self.cleanup_experiences(cutoff_time, &policy)?;
                 total_scanned += stats.scanned;
                 total_deleted += stats.deleted;
                 total_archived += stats.archived;
                 total_freed_bytes += stats.freed_bytes;
             }
             CleanupScope::AllLayers | CleanupScope::AllLayersPlusDeep => {
-                let raw_stats = self.cleanup_raw_logs(cutoff_time, &policy).await?;
+                let raw_stats = self.cleanup_raw_logs(cutoff_time, &policy)?;
                 total_scanned += raw_stats.scanned;
                 total_deleted += raw_stats.deleted;
                 total_archived += raw_stats.archived;
                 total_freed_bytes += raw_stats.freed_bytes;
 
-                let snap_stats = self.cleanup_snapshots(cutoff_time, &policy).await?;
+                let snap_stats = self.cleanup_snapshots(cutoff_time, &policy)?;
                 total_scanned += snap_stats.scanned;
                 total_deleted += snap_stats.deleted;
                 total_archived += snap_stats.archived;
                 total_freed_bytes += snap_stats.freed_bytes;
 
-                let exp_stats = self.cleanup_experiences(cutoff_time, &policy).await?;
+                let exp_stats = self.cleanup_experiences(cutoff_time, &policy)?;
                 total_scanned += exp_stats.scanned;
                 total_deleted += exp_stats.deleted;
                 total_archived += exp_stats.archived;
@@ -137,7 +137,7 @@ impl CleanupEngine {
         })
     }
 
-    async fn cleanup_raw_logs(
+    fn cleanup_raw_logs(
         &self,
         cutoff_time: i64,
         policy: &CleanupPolicy,
@@ -207,7 +207,7 @@ impl CleanupEngine {
         Ok(stats)
     }
 
-    async fn cleanup_snapshots(
+    fn cleanup_snapshots(
         &self,
         cutoff_time: i64,
         policy: &CleanupPolicy,
@@ -266,7 +266,7 @@ impl CleanupEngine {
         Ok(stats)
     }
 
-    async fn cleanup_experiences(
+    fn cleanup_experiences(
         &self,
         cutoff_time: i64,
         policy: &CleanupPolicy,
@@ -441,8 +441,8 @@ mod tests {
         assert!(score < 0.5);
     }
 
-    #[tokio::test]
-    async fn test_cleanup_expired_dry_run_raw_log_only() {
+    #[test]
+    fn test_cleanup_expired_dry_run_raw_log_only() {
         let (engine, sqlite, _sled) = setup_engine();
 
         sqlite
@@ -463,7 +463,7 @@ mod tests {
             dry_run: true,
         };
 
-        let result = engine.cleanup_expired(policy).await.unwrap();
+        let result = engine.cleanup_expired(policy).unwrap();
 
         assert_eq!(result.status, CleanupStatus::Completed);
         assert_eq!(result.scope, CleanupScope::RawLogOnly);
@@ -480,8 +480,8 @@ mod tests {
         assert_eq!(rows[0].entry_id, "log-001");
     }
 
-    #[tokio::test]
-    async fn test_cleanup_expired_dry_run_snapshot_only() {
+    #[test]
+    fn test_cleanup_expired_dry_run_snapshot_only() {
         let (engine, sqlite, sled_store) = setup_engine();
 
         sqlite
@@ -528,7 +528,7 @@ mod tests {
             dry_run: true,
         };
 
-        let result = engine.cleanup_expired(policy).await.unwrap();
+        let result = engine.cleanup_expired(policy).unwrap();
 
         assert_eq!(result.status, CleanupStatus::Completed);
         assert_eq!(result.statistics.scanned_entries, 1);
@@ -539,8 +539,8 @@ mod tests {
         assert!(sqlite.get_snapshot_meta("snap-002").unwrap().is_some());
     }
 
-    #[tokio::test]
-    async fn test_cleanup_expired_dry_run_experience_only() {
+    #[test]
+    fn test_cleanup_expired_dry_run_experience_only() {
         let (engine, sqlite, sled_store) = setup_engine();
 
         sqlite
@@ -579,7 +579,7 @@ mod tests {
             dry_run: true,
         };
 
-        let result = engine.cleanup_expired(policy).await.unwrap();
+        let result = engine.cleanup_expired(policy).unwrap();
 
         assert_eq!(result.status, CleanupStatus::Completed);
         assert!(result.statistics.scanned_entries >= 1);
@@ -590,8 +590,8 @@ mod tests {
         assert!(sled_store.get_experience("exp-002").unwrap().is_some());
     }
 
-    #[tokio::test]
-    async fn test_cleanup_expired_dry_run_all_layers() {
+    #[test]
+    fn test_cleanup_expired_dry_run_all_layers() {
         let (engine, sqlite, sled_store) = setup_engine();
 
         sqlite
@@ -629,7 +629,7 @@ mod tests {
             dry_run: true,
         };
 
-        let result = engine.cleanup_expired(policy).await.unwrap();
+        let result = engine.cleanup_expired(policy).unwrap();
 
         assert_eq!(result.status, CleanupStatus::Completed);
         assert_eq!(result.scope, CleanupScope::AllLayers);
@@ -648,8 +648,8 @@ mod tests {
         assert!(sled_store.get_experience("exp-001").unwrap().is_some());
     }
 
-    #[tokio::test]
-    async fn test_cleanup_expired_actual_deletion_raw_log() {
+    #[test]
+    fn test_cleanup_expired_actual_deletion_raw_log() {
         let (engine, sqlite, _sled) = setup_engine();
 
         sqlite
@@ -667,7 +667,7 @@ mod tests {
             dry_run: false,
         };
 
-        let result = engine.cleanup_expired(policy).await.unwrap();
+        let result = engine.cleanup_expired(policy).unwrap();
 
         assert_eq!(result.status, CleanupStatus::Completed);
         assert!(result.statistics.deleted_entries >= 1);
@@ -684,8 +684,8 @@ mod tests {
         assert_eq!(high_rows.len(), 1);
     }
 
-    #[tokio::test]
-    async fn test_cleanup_expired_actual_deletion_snapshot() {
+    #[test]
+    fn test_cleanup_expired_actual_deletion_snapshot() {
         let (engine, sqlite, sled_store) = setup_engine();
 
         sqlite
@@ -730,7 +730,7 @@ mod tests {
             dry_run: false,
         };
 
-        let result = engine.cleanup_expired(policy).await.unwrap();
+        let result = engine.cleanup_expired(policy).unwrap();
 
         assert_eq!(result.status, CleanupStatus::Completed);
         assert_eq!(result.statistics.deleted_entries, 1);
@@ -743,8 +743,8 @@ mod tests {
         assert!(sled_store.get_snapshot("snap-recent").unwrap().is_some());
     }
 
-    #[tokio::test]
-    async fn test_cleanup_expired_error_recovery_snapshot_preserved() {
+    #[test]
+    fn test_cleanup_expired_error_recovery_snapshot_preserved() {
         let (engine, sqlite, sled_store) = setup_engine();
 
         sqlite
@@ -773,7 +773,7 @@ mod tests {
             dry_run: false,
         };
 
-        let result = engine.cleanup_expired(policy).await.unwrap();
+        let result = engine.cleanup_expired(policy).unwrap();
 
         assert_eq!(result.statistics.scanned_entries, 0);
         assert_eq!(result.statistics.deleted_entries, 0);
@@ -782,8 +782,8 @@ mod tests {
         assert!(sled_store.get_snapshot("snap-err").unwrap().is_some());
     }
 
-    #[tokio::test]
-    async fn test_cleanup_expired_experience_archive_vs_delete() {
+    #[test]
+    fn test_cleanup_expired_experience_archive_vs_delete() {
         let (engine, sqlite, sled_store) = setup_engine();
 
         sqlite
@@ -822,7 +822,7 @@ mod tests {
             dry_run: false,
         };
 
-        let result = engine.cleanup_expired(policy).await.unwrap();
+        let result = engine.cleanup_expired(policy).unwrap();
 
         assert!(result.statistics.deleted_entries >= 1);
         assert!(result.statistics.archived_entries >= 1);
@@ -831,8 +831,8 @@ mod tests {
         assert!(sled_store.get_experience("exp-med-conf").unwrap().is_some());
     }
 
-    #[tokio::test]
-    async fn test_cleanup_expired_no_expired_entries() {
+    #[test]
+    fn test_cleanup_expired_no_expired_entries() {
         let (engine, sqlite, _sled) = setup_engine();
 
         sqlite
@@ -847,7 +847,7 @@ mod tests {
             dry_run: false,
         };
 
-        let result = engine.cleanup_expired(policy).await.unwrap();
+        let result = engine.cleanup_expired(policy).unwrap();
 
         assert_eq!(result.statistics.scanned_entries, 0);
         assert_eq!(result.statistics.deleted_entries, 0);
@@ -859,8 +859,8 @@ mod tests {
         assert_eq!(rows.len(), 1);
     }
 
-    #[tokio::test]
-    async fn test_cleanup_expired_uses_config_default_age() {
+    #[test]
+    fn test_cleanup_expired_uses_config_default_age() {
         let (engine, sqlite, _sled) = setup_engine();
 
         sqlite
@@ -875,13 +875,13 @@ mod tests {
             dry_run: false,
         };
 
-        let result = engine.cleanup_expired(policy).await.unwrap();
+        let result = engine.cleanup_expired(policy).unwrap();
 
         assert!(result.statistics.scanned_entries >= 1);
     }
 
-    #[tokio::test]
-    async fn test_cleanup_expired_all_layers_plus_deep() {
+    #[test]
+    fn test_cleanup_expired_all_layers_plus_deep() {
         let (engine, sqlite, sled_store) = setup_engine();
 
         sqlite
@@ -915,7 +915,7 @@ mod tests {
             dry_run: true,
         };
 
-        let result = engine.cleanup_expired(policy).await.unwrap();
+        let result = engine.cleanup_expired(policy).unwrap();
 
         assert_eq!(result.scope, CleanupScope::AllLayersPlusDeep);
         assert!(result.statistics.scanned_entries >= 3);
@@ -929,8 +929,8 @@ mod tests {
         assert_eq!(exp_rows.len(), 1);
     }
 
-    #[tokio::test]
-    async fn test_cleanup_expired_result_fields() {
+    #[test]
+    fn test_cleanup_expired_result_fields() {
         let (engine, _sqlite, _sled) = setup_engine();
 
         let policy = CleanupPolicy {
@@ -941,7 +941,7 @@ mod tests {
             dry_run: true,
         };
 
-        let result = engine.cleanup_expired(policy).await.unwrap();
+        let result = engine.cleanup_expired(policy).unwrap();
 
         assert!(!result.cleanup_id.is_empty());
         assert_eq!(result.cleanup_type, CleanupType::Manual);

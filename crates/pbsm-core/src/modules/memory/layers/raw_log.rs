@@ -2,7 +2,7 @@ use crate::modules::memory::error::Result;
 use crate::modules::memory::storage::sled_kv::SledKvStore;
 use crate::modules::memory::storage::sqlite::SqliteStorage;
 use crate::modules::memory::types::{
-    LogType, MemoryEntry, MemoryLayer, RawLogEntry, SourceReference, WriteLogResult,
+    LogReferences, LogType, MemoryEntry, MemoryLayer, RawLogEntry, SourceReference, WriteLogResult,
 };
 use chrono::Utc;
 use serde_json;
@@ -19,25 +19,29 @@ impl RawLogLayer {
         Self { sqlite, sled }
     }
 
-    pub async fn write_log(
+    pub fn write_log(
         &self,
         session_id: &str,
         log_type: LogType,
         payload: serde_json::Value,
         topic: &str,
         confidence: Option<f64>,
+        references: Option<LogReferences>,
     ) -> Result<WriteLogResult> {
         let log_id = Uuid::new_v4().to_string();
         let timestamp = Utc::now().timestamp_millis();
+
+        let existing = self.query_by_session(session_id).unwrap_or_default();
+        let sequence_number = (existing.len() as u64) + 1;
 
         let entry = RawLogEntry {
             log_id: log_id.clone(),
             session_id: session_id.to_string(),
             log_type,
             timestamp,
-            sequence_number: 0,
+            sequence_number,
             payload,
-            references: serde_json::Value::Null,
+            references: references.unwrap_or_default(),
         };
 
         let json = serde_json::to_vec(&entry)?;
@@ -50,7 +54,7 @@ impl RawLogLayer {
         Ok(WriteLogResult { log_id, timestamp })
     }
 
-    pub async fn query_by_session(&self, session_id: &str) -> Result<Vec<RawLogEntry>> {
+    pub fn query_by_session(&self, session_id: &str) -> Result<Vec<RawLogEntry>> {
         let pairs = self.sled.scan_logs_by_session(session_id)?;
         let mut entries = Vec::with_capacity(pairs.len());
         for (_key, data) in pairs {
@@ -60,7 +64,7 @@ impl RawLogLayer {
         Ok(entries)
     }
 
-    pub async fn query_by_topic(
+    pub fn query_by_topic(
         &self,
         topic: &str,
         confidence_threshold: Option<f64>,
@@ -80,6 +84,8 @@ impl RawLogLayer {
                 memory_type: "raw_log".to_string(),
                 relevance_score: row.confidence.unwrap_or(0.0),
                 confidence: row.confidence.unwrap_or(0.0),
+                importance: 0.0,
+                recency_score: 0.0,
                 summary: format!("Raw log entry for topic: {}", row.topic),
                 content: serde_json::json!({
                     "topic": row.topic,
@@ -100,7 +106,7 @@ impl RawLogLayer {
         Ok(entries)
     }
 
-    pub async fn delete_log(&self, session_id: &str, log_id: &str) -> Result<bool> {
+    pub fn delete_log(&self, session_id: &str, log_id: &str) -> Result<bool> {
         let sled_removed = self.sled.remove_raw_log(session_id, log_id)?;
         let sqlite_deleted = self.sqlite.delete_memory_index(log_id)?;
         Ok(sled_removed || sqlite_deleted)
@@ -118,8 +124,8 @@ mod tests {
         (Arc::new(sqlite), Arc::new(sled))
     }
 
-    #[tokio::test]
-    async fn test_write_log() {
+    #[test]
+    fn test_write_log() {
         let (sqlite, sled) = setup();
         let layer = RawLogLayer::new(sqlite, sled);
 
@@ -130,16 +136,16 @@ mod tests {
                 serde_json::json!({"message": "hello"}),
                 "greeting",
                 Some(0.8),
+                None,
             )
-            .await
             .unwrap();
 
         assert!(!result.log_id.is_empty());
         assert!(result.timestamp > 0);
     }
 
-    #[tokio::test]
-    async fn test_query_by_session() {
+    #[test]
+    fn test_query_by_session() {
         let (sqlite, sled) = setup();
         let layer = RawLogLayer::new(sqlite, sled);
 
@@ -150,8 +156,8 @@ mod tests {
                 serde_json::json!({"m": "a"}),
                 "topic-a",
                 None,
+                None,
             )
-            .await
             .unwrap();
         layer
             .write_log(
@@ -160,8 +166,8 @@ mod tests {
                 serde_json::json!({"m": "b"}),
                 "topic-b",
                 None,
+                None,
             )
-            .await
             .unwrap();
         layer
             .write_log(
@@ -170,19 +176,19 @@ mod tests {
                 serde_json::json!({"m": "c"}),
                 "topic-c",
                 None,
+                None,
             )
-            .await
             .unwrap();
 
-        let entries = layer.query_by_session("sess-001").await.unwrap();
+        let entries = layer.query_by_session("sess-001").unwrap();
         assert_eq!(entries.len(), 2);
 
-        let entries = layer.query_by_session("sess-002").await.unwrap();
+        let entries = layer.query_by_session("sess-002").unwrap();
         assert_eq!(entries.len(), 1);
     }
 
-    #[tokio::test]
-    async fn test_query_by_topic() {
+    #[test]
+    fn test_query_by_topic() {
         let (sqlite, sled) = setup();
         let layer = RawLogLayer::new(sqlite, sled);
 
@@ -193,8 +199,8 @@ mod tests {
                 serde_json::json!({}),
                 "greeting",
                 Some(0.9),
+                None,
             )
-            .await
             .unwrap();
         layer
             .write_log(
@@ -203,22 +209,21 @@ mod tests {
                 serde_json::json!({}),
                 "greeting",
                 Some(0.5),
+                None,
             )
-            .await
             .unwrap();
 
         let entries = layer
             .query_by_topic("greeting", Some(0.7), 10)
-            .await
             .unwrap();
         assert_eq!(entries.len(), 1);
 
-        let entries = layer.query_by_topic("greeting", None, 10).await.unwrap();
+        let entries = layer.query_by_topic("greeting", None, 10).unwrap();
         assert_eq!(entries.len(), 2);
     }
 
-    #[tokio::test]
-    async fn test_delete_log() {
+    #[test]
+    fn test_delete_log() {
         let (sqlite, sled) = setup();
         let layer = RawLogLayer::new(sqlite, sled);
 
@@ -229,19 +234,19 @@ mod tests {
                 serde_json::json!({}),
                 "topic",
                 None,
+                None,
             )
-            .await
             .unwrap();
 
-        let deleted = layer.delete_log("sess-001", &result.log_id).await.unwrap();
+        let deleted = layer.delete_log("sess-001", &result.log_id).unwrap();
         assert!(deleted);
 
-        let deleted_again = layer.delete_log("sess-001", &result.log_id).await.unwrap();
+        let deleted_again = layer.delete_log("sess-001", &result.log_id).unwrap();
         assert!(!deleted_again);
     }
 
-    #[tokio::test]
-    async fn test_write_log_without_confidence() {
+    #[test]
+    fn test_write_log_without_confidence() {
         let (sqlite, sled) = setup();
         let layer = RawLogLayer::new(sqlite, sled);
 
@@ -252,19 +257,19 @@ mod tests {
                 serde_json::json!({"key": "val"}),
                 "belief",
                 None,
+                None,
             )
-            .await
             .unwrap();
 
         assert!(!result.log_id.is_empty());
     }
 
-    #[tokio::test]
-    async fn test_query_by_session_empty() {
+    #[test]
+    fn test_query_by_session_empty() {
         let (sqlite, sled) = setup();
         let layer = RawLogLayer::new(sqlite, sled);
 
-        let entries = layer.query_by_session("nonexistent").await.unwrap();
+        let entries = layer.query_by_session("nonexistent").unwrap();
         assert!(entries.is_empty());
     }
 }

@@ -24,6 +24,7 @@ sled.workspace = true
 lz4_flex.workspace = true
 zstd.workspace = true
 toml.workspace = true
+indexmap.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
