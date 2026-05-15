@@ -568,7 +568,7 @@ impl BeliefGraph {
         for node in nodes.values() {
             let avg_conf = node.average_confidence();
             total_confidence += avg_conf;
-            if avg_conf >= 0.7 {
+            if avg_conf >= 0.8 {
                 high_count += 1;
             }
             if avg_conf < 0.4 {

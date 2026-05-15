@@ -385,6 +385,7 @@ pub fn make_test_belief_node(id: &str, node_type: &str, confidence: f64) -> Beli
         node_type: node_type.to_string(),
         attributes: serde_json::json!({}),
         confidence,
+        attribute_confidences: std::collections::HashMap::new(),
         created_at: now,
         updated_at: now,
     }

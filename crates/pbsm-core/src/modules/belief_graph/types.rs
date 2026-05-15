@@ -185,6 +185,8 @@ pub struct NodeMetadata {
     pub importance: ImportanceLevel,
     pub owner_agent_id: Option<String>,
     pub is_active: bool,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub former_attributes: HashMap<String, Vec<AttributeValue>>,
 }
 
 impl Default for NodeMetadata {
@@ -198,6 +200,7 @@ impl Default for NodeMetadata {
             importance: ImportanceLevel::default(),
             owner_agent_id: None,
             is_active: true,
+            former_attributes: HashMap::new(),
         }
     }
 }
@@ -806,7 +809,7 @@ pub enum ConflictSeverity {
 impl ConflictSeverity {
     pub fn from_confidence_delta(local: f64, external: f64) -> Self {
         let delta = (local - external).abs();
-        if delta >= 0.5 {
+        if delta >= 0.4 {
             ConflictSeverity::High
         } else if delta >= 0.2 {
             ConflictSeverity::Medium

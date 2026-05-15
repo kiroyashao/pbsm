@@ -307,7 +307,7 @@ impl FusionOperations {
     /// 2. ToolReturn (0.9) - 工具返回
     /// 3. UserInput (0.85) - 用户输入
     /// 4. MemoryRestore (0.7) - 记忆恢复
-    /// 5. AgentSync (0.6) - Agent同步
+    /// 5. AgentSync (0.65) - Agent同步
     /// 6. Derived (0.5) - 推导得出，最低
     fn get_source_priority(source_type: SourceType) -> f64 {
         match source_type {
@@ -315,7 +315,7 @@ impl FusionOperations {
             SourceType::ToolReturn => 0.9,
             SourceType::UserInput => 0.85,
             SourceType::MemoryRestore => 0.7,
-            SourceType::AgentSync => 0.6,
+            SourceType::AgentSync => 0.65,
             SourceType::Derived => 0.5,
         }
     }

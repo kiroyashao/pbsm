@@ -206,6 +206,13 @@ impl BeliefGraphOperations {
             }
             UpdateStrategy::ConservativeMerge => {
                 for (key, value) in updates {
+                    if let Some(existing) = node.attributes.remove(&key) {
+                        node.metadata
+                            .former_attributes
+                            .entry(key.clone())
+                            .or_insert_with(Vec::new)
+                            .push(existing);
+                    }
                     node.attributes.insert(key, value);
                 }
             }
