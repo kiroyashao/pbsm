@@ -828,7 +828,7 @@ impl BeliefGraphWriter for BeliefGraph {
             .ok_or_else(|| BeliefGraphError::NodeNotFound(node_id.to_string()))?;
         if let Some(attr) = node.attributes.get_mut(attribute) {
             let old_confidence = attr.confidence;
-            attr.confidence = new_confidence;
+            attr.confidence = new_confidence.clamp(0.0, 1.0);
             attr.last_updated = chrono::Utc::now();
             drop(nodes);
             let mut indexes = self.indexes.write();
@@ -857,7 +857,15 @@ impl BeliefGraphWriter for BeliefGraph {
         node.metadata.importance = ImportanceLevel::High;
         node.metadata.last_modified = chrono::Utc::now();
         node.metadata.version += 1;
-        let _ = reason;
+        node.attributes.insert(
+            "_revision_reason".to_string(),
+            crate::modules::belief_graph::types::AttributeValue::new(
+                serde_json::json!(reason),
+                1.0,
+                "system".to_string(),
+                crate::modules::belief_graph::types::SourceType::Derived,
+            ),
+        );
         Ok(())
     }
 }

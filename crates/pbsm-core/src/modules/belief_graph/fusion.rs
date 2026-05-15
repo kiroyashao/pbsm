@@ -95,7 +95,7 @@ impl FusionOperations {
 
             if let Some(local_node) = local_node_map.get(&external_node.node_id) {
                 let (updated, conflicts) =
-                    Self::merge_node(local_node, external_node, strategy, &config);
+                    Self::merge_node(local_node, external_node, strategy, &config, graph.config().confidence_decay_rate);
 
                 if updated {
                     stats.nodes_updated += 1;
@@ -217,6 +217,7 @@ impl FusionOperations {
         external: &BeliefNode,
         strategy: ResolutionStrategy,
         _config: &FusionConfig,
+        confidence_decay_rate: f64,
     ) -> (bool, ConflictStats) {
         let mut updated = false;
         let mut stats = ConflictStats::default();
@@ -252,9 +253,8 @@ impl FusionOperations {
                         ResolutionStrategy::TimeDecay => {
                             let age_hours =
                                 (chrono::Utc::now() - local_attr.last_updated).num_hours() as f64;
-                            let decay_rate = 0.01;
                             let adjusted_local =
-                                local_attr.confidence * (-decay_rate * age_hours).exp().max(0.3);
+                                local_attr.confidence * (-confidence_decay_rate * age_hours).exp().max(0.3);
 
                             if external_attr.confidence > adjusted_local {
                                 updated = true;
