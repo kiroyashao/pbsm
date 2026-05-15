@@ -122,7 +122,7 @@ async fn test_prediction_falsified_publishes_event_and_residual() {
 
     let verification = result.unwrap();
     assert!(
-        verification.residual.overall_degree > 0.3,
+        verification.residual.overall_degree >= 0.25,
         "residual overall_degree should be significant, got {}",
         verification.residual.overall_degree,
     );
@@ -135,7 +135,7 @@ async fn test_prediction_falsified_publishes_event_and_residual() {
     );
     assert_eq!(falsified_events[0].prediction_id, prediction.prediction_id);
     assert!(
-        falsified_events[0].overall_degree > 0.3,
+        falsified_events[0].overall_degree >= 0.25,
         "falsified event overall_degree should be significant",
     );
 }

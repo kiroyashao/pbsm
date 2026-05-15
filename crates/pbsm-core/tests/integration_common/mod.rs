@@ -9,9 +9,10 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use pbsm_core::modules::common::{
-    BeliefGraphError, BeliefGraphReader, BeliefGraphWriter, BeliefNode, BeliefQuerySpec,
-    BeliefState, EventPublishError, EventPublisher, PredictionCreatedPayload, PredictionEvent,
-    PredictionFalsifiedPayload, PredictionVerifiedPayload, RelationEdge,
+    BeliefGraphError, BeliefGraphReader, BeliefGraphWriter, BeliefHistoryRange, BeliefNode,
+    BeliefQuerySpec, BeliefState, BeliefVersion, EventPublishError, EventPublisher, PBSMEvent,
+    PredictionCreatedPayload, PredictionEvent, PredictionFalsifiedPayload,
+    PredictionVerifiedPayload, RelationEdge,
 };
 use pbsm_core::modules::intention_stack::events::{
     IntentionStackEvent, IntentionStackEventPublisher,
@@ -129,6 +130,26 @@ impl BeliefGraphReader for MockBeliefGraphReader {
             .filter(|e| e.source_node == node_id)
             .cloned()
             .collect())
+    }
+
+    async fn get_incoming_edges(
+        &self,
+        node_id: &str,
+    ) -> Result<Vec<RelationEdge>, BeliefGraphError> {
+        let edges = self.edges.lock();
+        Ok(edges
+            .iter()
+            .filter(|e| e.target_node == node_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn get_belief_history(
+        &self,
+        _node_id: &str,
+        _range: BeliefHistoryRange,
+    ) -> Result<Vec<BeliefVersion>, BeliefGraphError> {
+        Ok(Vec::new())
     }
 }
 
@@ -258,8 +279,8 @@ impl Default for CollectingEventPublisher {
 }
 
 impl EventPublisher for CollectingEventPublisher {
-    fn publish_event(&self, event: PredictionEvent) -> Result<(), EventPublishError> {
-        self.events.lock().push(event);
+    fn publish_event(&self, event: PBSMEvent) -> Result<(), EventPublishError> {
+        self.events.lock().push(event.payload);
         Ok(())
     }
 }

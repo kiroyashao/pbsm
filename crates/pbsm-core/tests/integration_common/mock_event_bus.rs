@@ -67,6 +67,18 @@ impl CrossModuleEventBus {
             PredictionEvent::CriticalResidualDetected(_) => {
                 event_type == "CriticalResidualDetected"
             }
+            PredictionEvent::PredictionStatusChanged(_) => event_type == "PredictionStatusChanged",
+            PredictionEvent::PredictionExpired(_) => event_type == "PredictionExpired",
+            PredictionEvent::PredictionCancelled(_) => event_type == "PredictionCancelled",
+            PredictionEvent::ResidualTrendAlert(_) => event_type == "ResidualTrendAlert",
+            PredictionEvent::PredictionEngineInitialized(_) => {
+                event_type == "PredictionEngineInitialized"
+            }
+            PredictionEvent::PredictionEngineError(_) => event_type == "PredictionEngineError",
+            PredictionEvent::ContextIntegrityWarning(_) => {
+                event_type == "ContextIntegrityWarning"
+            }
+            PredictionEvent::VerificationTimeout(_) => event_type == "VerificationTimeout",
         })
     }
 

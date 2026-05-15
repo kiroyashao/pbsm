@@ -809,6 +809,32 @@ impl BeliefGraphReader for BeliefGraph {
             .collect();
         Ok(result)
     }
+
+    async fn get_incoming_edges(
+        &self,
+        node_id: &str,
+    ) -> Result<Vec<crate::modules::common::RelationEdge>, BeliefGraphError> {
+        let uuid = uuid::Uuid::parse_str(node_id).map_err(|e| {
+            BeliefGraphError::NodeNotFound(format!("Invalid UUID {}: {}", node_id, e))
+        })?;
+        let adj = self.adjacency.read();
+        let incoming = adj.incoming.get(&uuid).cloned().unwrap_or_default();
+        drop(adj);
+        let edges = self.edges.read();
+        let result: Vec<crate::modules::common::RelationEdge> = incoming
+            .iter()
+            .filter_map(|(edge_id, _)| edges.get(edge_id).map(convert_edge))
+            .collect();
+        Ok(result)
+    }
+
+    async fn get_belief_history(
+        &self,
+        _node_id: &str,
+        _range: crate::modules::common::BeliefHistoryRange,
+    ) -> Result<Vec<crate::modules::common::BeliefVersion>, BeliefGraphError> {
+        Ok(Vec::new())
+    }
 }
 
 #[async_trait]

@@ -202,8 +202,8 @@ async fn test_error_handling_workflow() {
     let action = ActionRequest {
         action_type: ActionType::ToolCall,
         action_name: "risky_operation".to_string(),
-        parameters: serde_json::json!({"target": "critical_resource"}),
-        target_id: None,
+        parameters: serde_json::json!({"target": "critical_resource", "expected_value": "success"}),
+        target_id: Some("critical_resource".to_string()),
     };
     let prediction = engine.create_prediction(action, None).await.unwrap();
     assert_eq!(prediction.status, PredictionState::Pending);

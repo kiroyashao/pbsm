@@ -10,7 +10,6 @@
 //! - BeliefGraphReader/BeliefGraphWriter：信念图读写接口
 //! - EventPublisher：事件发布接口
 //! - Null*：空实现，用于测试和默认配置
-
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -43,6 +42,15 @@ pub trait BeliefGraphReader: Send + Sync {
         &self,
         node_id: &str,
     ) -> Result<Vec<RelationEdge>, BeliefGraphError>;
+    async fn get_incoming_edges(
+        &self,
+        node_id: &str,
+    ) -> Result<Vec<RelationEdge>, BeliefGraphError>;
+    async fn get_belief_history(
+        &self,
+        node_id: &str,
+        range: BeliefHistoryRange,
+    ) -> Result<Vec<BeliefVersion>, BeliefGraphError>;
 }
 
 /// 信念节点结构体
@@ -149,6 +157,21 @@ impl std::error::Error for BeliefGraphError {}
 ///
 /// 该接口定义了更新信念图所需的操作。
 /// 主要用于预测验证后对信念的修正。
+#[derive(Debug, Clone)]
+pub struct BeliefHistoryRange {
+    pub from: DateTime<Utc>,
+    pub to: DateTime<Utc>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BeliefVersion {
+    pub version: u64,
+    pub confidence: f64,
+    pub attributes: Value,
+    pub timestamp: DateTime<Utc>,
+}
+
 #[async_trait]
 pub trait BeliefGraphWriter: Send + Sync {
     async fn update_belief_confidence(
@@ -171,7 +194,7 @@ pub trait BeliefGraphWriter: Send + Sync {
 ///
 /// 预测引擎通过该接口发布各类事件，供外部系统订阅处理。
 pub trait EventPublisher: Send + Sync {
-    fn publish_event(&self, event: PredictionEvent) -> Result<(), EventPublishError>;
+    fn publish_event(&self, event: PBSMEvent) -> Result<(), EventPublishError>;
 }
 
 /// 预测事件枚举
@@ -192,6 +215,14 @@ pub enum PredictionEvent {
     WarningResidualDetected(WarningResidualPayload),
     ErrorResidualDetected(ErrorResidualPayload),
     CriticalResidualDetected(CriticalResidualPayload),
+    PredictionStatusChanged(PredictionStatusChangedPayload),
+    PredictionExpired(PredictionExpiredPayload),
+    PredictionCancelled(PredictionCancelledPayload),
+    ResidualTrendAlert(ResidualTrendAlertPayload),
+    PredictionEngineInitialized(PredictionEngineInitializedPayload),
+    PredictionEngineError(PredictionEngineErrorPayload),
+    ContextIntegrityWarning(ContextIntegrityWarningPayload),
+    VerificationTimeout(VerificationTimeoutPayload),
 }
 
 /// 预测创建事件载荷
@@ -264,6 +295,63 @@ pub enum Urgency {
 
 /// 事件发布错误类型
 #[derive(Debug, Clone)]
+pub struct PredictionStatusChangedPayload {
+    pub prediction_id: Uuid,
+    pub previous_status: String,
+    pub new_status: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PredictionExpiredPayload {
+    pub prediction_id: Uuid,
+    pub expiration_reason: String,
+    pub duration_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct PredictionCancelledPayload {
+    pub prediction_id: Uuid,
+    pub cancellation_reason: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResidualTrendAlertPayload {
+    pub prediction_id: Uuid,
+    pub trend: String,
+    pub previous_average: f64,
+    pub current_average: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct PredictionEngineInitializedPayload {
+    pub version: String,
+    pub config_summary: String,
+    pub active_prediction_count: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct PredictionEngineErrorPayload {
+    pub error: String,
+    pub context: String,
+    pub recovery_action: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContextIntegrityWarningPayload {
+    pub prediction_id: Uuid,
+    pub missing_fields: Vec<String>,
+    pub completeness_score: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct VerificationTimeoutPayload {
+    pub prediction_id: Uuid,
+    pub elapsed_ms: u64,
+    pub threshold_ms: u64,
+}
+
+#[derive(Debug, Clone)]
 pub enum EventPublishError {
     PublishFailed(String),
     EventTypeUnknown,
@@ -285,6 +373,125 @@ impl std::error::Error for EventPublishError {}
 /// # 用途
 ///
 /// 用于测试或当不需要信念图功能时的默认实现
+#[derive(Debug, Clone)]
+pub struct EventSource {
+    pub module: String,
+    pub instance_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PBSMEvent {
+    pub event_id: Uuid,
+    pub event_type: String,
+    pub source: EventSource,
+    pub timestamp: DateTime<Utc>,
+    pub correlation_id: Option<String>,
+    pub payload: PredictionEvent,
+}
+
+impl PBSMEvent {
+    pub fn new(payload: PredictionEvent) -> Self {
+        let event_type = match &payload {
+            PredictionEvent::PredictionCreated(_) => "PredictionCreated",
+            PredictionEvent::PredictionVerified(_) => "PredictionVerified",
+            PredictionEvent::PredictionFalsified(_) => "PredictionFalsified",
+            PredictionEvent::ResidualComputed(_) => "ResidualComputed",
+            PredictionEvent::WarningResidualDetected(_) => "WarningResidualDetected",
+            PredictionEvent::ErrorResidualDetected(_) => "ErrorResidualDetected",
+            PredictionEvent::CriticalResidualDetected(_) => "CriticalResidualDetected",
+            PredictionEvent::PredictionStatusChanged(_) => "PredictionStatusChanged",
+            PredictionEvent::PredictionExpired(_) => "PredictionExpired",
+            PredictionEvent::PredictionCancelled(_) => "PredictionCancelled",
+            PredictionEvent::ResidualTrendAlert(_) => "ResidualTrendAlert",
+            PredictionEvent::PredictionEngineInitialized(_) => "PredictionEngineInitialized",
+            PredictionEvent::PredictionEngineError(_) => "PredictionEngineError",
+            PredictionEvent::ContextIntegrityWarning(_) => "ContextIntegrityWarning",
+            PredictionEvent::VerificationTimeout(_) => "VerificationTimeout",
+        };
+        PBSMEvent {
+            event_id: Uuid::new_v4(),
+            event_type: event_type.to_string(),
+            source: EventSource {
+                module: "pbsm-core".to_string(),
+                instance_id: None,
+            },
+            timestamp: Utc::now(),
+            correlation_id: None,
+            payload,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum SubscriptionError {
+    NotFound(String),
+    AlreadySubscribed(String),
+    InvalidCallback(String),
+    InternalError(String),
+}
+
+impl std::fmt::Display for SubscriptionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SubscriptionError::NotFound(id) => write!(f, "Subscription not found: {}", id),
+            SubscriptionError::AlreadySubscribed(id) => {
+                write!(f, "Already subscribed: {}", id)
+            }
+            SubscriptionError::InvalidCallback(msg) => {
+                write!(f, "Invalid callback: {}", msg)
+            }
+            SubscriptionError::InternalError(msg) => {
+                write!(f, "Internal error: {}", msg)
+            }
+        }
+    }
+}
+
+impl std::error::Error for SubscriptionError {}
+
+#[derive(Debug, Clone)]
+pub struct SubscriptionHandle {
+    pub subscription_id: String,
+    pub prediction_id: String,
+}
+
+pub trait PredictionSubscriber: Send + Sync {
+    fn subscribe(
+        &self,
+        prediction_id: &str,
+        callback: Box<dyn Fn(PBSMEvent) + Send + Sync>,
+    ) -> Result<String, SubscriptionError>;
+    fn unsubscribe(&self, subscription_id: &str) -> Result<(), SubscriptionError>;
+}
+
+#[derive(Debug, Clone)]
+pub struct AttentionStatus {
+    pub parameter: f64,
+    pub mode: String,
+    pub focus_areas: Vec<String>,
+}
+
+pub trait AttentionStatusReader: Send + Sync {
+    fn get_attention_status(&self) -> AttentionStatus;
+    fn get_focus_areas(&self) -> Vec<String>;
+}
+
+pub struct NullAttentionStatusReader;
+
+impl AttentionStatusReader for NullAttentionStatusReader {
+    fn get_attention_status(&self) -> AttentionStatus {
+        AttentionStatus {
+            parameter: 0.0,
+            mode: String::new(),
+            focus_areas: Vec::new(),
+        }
+    }
+
+    fn get_focus_areas(&self) -> Vec<String> {
+        Vec::new()
+    }
+}
+
 pub struct NullBeliefGraphReader;
 
 #[async_trait]
@@ -320,6 +527,21 @@ impl BeliefGraphReader for NullBeliefGraphReader {
     ) -> Result<Vec<RelationEdge>, BeliefGraphError> {
         Ok(Vec::new())
     }
+
+    async fn get_incoming_edges(
+        &self,
+        _node_id: &str,
+    ) -> Result<Vec<RelationEdge>, BeliefGraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_belief_history(
+        &self,
+        _node_id: &str,
+        _range: BeliefHistoryRange,
+    ) -> Result<Vec<BeliefVersion>, BeliefGraphError> {
+        Ok(Vec::new())
+    }
 }
 
 /// 信念图写入接口的空实现
@@ -353,7 +575,7 @@ impl BeliefGraphWriter for NullBeliefGraphWriter {
 pub struct NullEventPublisher;
 
 impl EventPublisher for NullEventPublisher {
-    fn publish_event(&self, _event: PredictionEvent) -> Result<(), EventPublishError> {
+    fn publish_event(&self, _event: PBSMEvent) -> Result<(), EventPublishError> {
         Ok(())
     }
 }

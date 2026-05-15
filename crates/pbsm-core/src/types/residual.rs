@@ -251,16 +251,16 @@ impl TemporalDimension {
     /// duration = (actual_time - expected_time).num_milliseconds()
     /// delay_ratio = duration / max(expected_duration_ms, 1)
     /// value = (delay_ratio).clamp(-1.0, 1.0)
-    pub fn compute(expected_time: DateTime<Utc>, actual_time: DateTime<Utc>) -> Self {
+    pub fn compute(expected_time: DateTime<Utc>, actual_time: DateTime<Utc>, expected_duration_ms: f64) -> Self {
         let duration = (actual_time - expected_time).num_milliseconds() as f64;
-        let expected_duration_ms = 1.0_f64.max(100.0);
+        let safe_duration = expected_duration_ms.max(1.0);
 
         Self {
             computed: true,
-            value: (duration / expected_duration_ms).clamp(-1.0, 1.0),
+            value: (duration / safe_duration).clamp(-1.0, 1.0),
             expected_time,
             actual_time,
-            delay_ratio: duration / expected_duration_ms,
+            delay_ratio: duration / safe_duration,
         }
     }
 
@@ -268,14 +268,18 @@ impl TemporalDimension {
     ///
     /// # 返回
     /// * 表示超时的 TemporalDimension 实例
-    pub fn timeout() -> Self {
+    pub fn timeout(expected_duration_ms: f64) -> Self {
         let now = Utc::now();
+        let duration_ms = 60_000.0_f64;
+        let safe_duration = expected_duration_ms.max(1.0);
+        let delay_ratio = duration_ms / safe_duration;
+
         Self {
             computed: true,
-            value: 1.0,
+            value: delay_ratio.clamp(-1.0, 1.0),
             expected_time: now - chrono::Duration::seconds(60),
             actual_time: now,
-            delay_ratio: 1.0,
+            delay_ratio,
         }
     }
 }
@@ -352,17 +356,14 @@ impl StructuralDimension {
         let missing: Vec<_> = expected_set.difference(&actual_set).collect();
         let extra: Vec<_> = actual_set.difference(&expected_set).collect();
 
-        let missing_ratio = missing.len() as f64 / expected_fields.len().max(1) as f64;
-        let extra_ratio = extra.len() as f64 / actual_fields.len().max(1) as f64;
+        let missing_extra_ratio =
+            (missing.len() + extra.len()) as f64 / expected_fields.len().max(1) as f64;
 
         let total_nested_diff: f64 = nested_comparisons.iter().map(|(_, d)| d).sum();
-        let nested_diff_avg = total_nested_diff / nested_comparisons.len().max(1) as f64;
+        let max_fields = expected_fields.len().max(1) as f64;
+        let nested_diff_sum = total_nested_diff / max_fields;
 
-        let alpha = 0.4;
-        let beta = 0.2;
-        let gamma = 0.4;
-
-        let residual = alpha * missing_ratio + beta * extra_ratio + gamma * nested_diff_avg;
+        let residual = missing_extra_ratio + nested_diff_sum;
 
         Self {
             computed: true,
@@ -431,30 +432,21 @@ impl ResidualDimensions {
     /// overall = total / weight_sum
     pub fn compute_overall(&self, weights: &DimensionWeights) -> f64 {
         let mut total = 0.0;
-        let mut weight_sum = 0.0;
 
         if self.numerical.computed {
             total += self.numerical.value.abs() * weights.numerical;
-            weight_sum += weights.numerical;
         }
         if self.semantic.computed {
             total += self.semantic.value * weights.semantic;
-            weight_sum += weights.semantic;
         }
         if self.temporal.computed {
             total += self.temporal.value.abs() * weights.temporal;
-            weight_sum += weights.temporal;
         }
         if self.structural.computed {
             total += self.structural.value * weights.structural;
-            weight_sum += weights.structural;
         }
 
-        if weight_sum > 0.0 {
-            total / weight_sum
-        } else {
-            0.0
-        }
+        total
     }
 }
 
@@ -537,13 +529,13 @@ impl SeverityLevel {
     /// - |degree| < 0.001 → None
     /// - warning_threshold < |degree| ≤ error_threshold → Error
     /// - |degree| > error_threshold → Critical
-    pub fn from_degree(degree: f64, warning_threshold: f64, error_threshold: f64) -> Self {
+    pub fn from_degree(degree: f64, warning_threshold: f64, error_threshold: f64, tolerance_margin: f64) -> Self {
         let abs_degree = degree.abs();
         if abs_degree < 0.001 {
             Self::None
-        } else if abs_degree <= warning_threshold {
+        } else if abs_degree <= warning_threshold + tolerance_margin {
             Self::Warning
-        } else if abs_degree <= error_threshold {
+        } else if abs_degree <= error_threshold + tolerance_margin {
             Self::Error
         } else {
             Self::Critical
@@ -560,6 +552,7 @@ pub struct SeverityThreshold {
     pub error: f64,
     /// 严重阈值上限（固定为 1.0）
     pub critical: f64,
+    pub tolerance_margin: f64,
 }
 
 impl Default for SeverityThreshold {
@@ -568,6 +561,7 @@ impl Default for SeverityThreshold {
             warning: 0.3,
             error: 0.7,
             critical: 1.0,
+            tolerance_margin: 0.05,
         }
     }
 }
@@ -596,9 +590,39 @@ impl SeverityAssessment {
     ///
     /// # 返回
     /// * 评估结果
-    pub fn assess(degree: f64, threshold: &SeverityThreshold) -> Self {
+    pub fn assess(degree: f64, threshold: &SeverityThreshold, dimensions: &ResidualDimensions) -> Self {
+        let mut level = SeverityLevel::from_degree(
+            degree,
+            threshold.warning,
+            threshold.error,
+            threshold.tolerance_margin,
+        );
+
+        if dimensions.numerical.computed && dimensions.numerical.value.abs() >= 1.0
+            || dimensions.semantic.computed && dimensions.semantic.value >= 1.0
+            || dimensions.temporal.computed && dimensions.temporal.value >= 1.0
+            || dimensions.structural.computed && dimensions.structural.value >= 1.0
+        {
+            level = SeverityLevel::Critical;
+        }
+
+        if dimensions.structural.computed
+            && dimensions.structural.value >= 0.5
+            && matches!(level, SeverityLevel::None | SeverityLevel::Warning)
+        {
+            level = SeverityLevel::Error;
+        }
+
+        if dimensions.semantic.computed
+            && dimensions.semantic.value >= 1.0
+            && !dimensions.semantic.category_match
+            && matches!(level, SeverityLevel::None | SeverityLevel::Warning)
+        {
+            level = SeverityLevel::Error;
+        }
+
         Self {
-            level: SeverityLevel::from_degree(degree, threshold.warning, threshold.error),
+            level,
             score: degree.abs() * 100.0,
             threshold: threshold.clone(),
             triggered_by: "M2".to_string(),
@@ -746,7 +770,56 @@ impl Residual {
             threshold.warning,
             threshold.error,
         );
-        self.severity_assessment = SeverityAssessment::assess(self.overall_degree, threshold);
+        self.severity_assessment =
+            SeverityAssessment::assess(self.overall_degree, threshold, &self.dimensions);
+    }
+
+    pub fn populate_root_cause(&mut self) {
+        if self.component_residuals.is_empty() {
+            return;
+        }
+
+        let max_diff = self
+            .component_residuals
+            .iter()
+            .map(|c| c.diff_value)
+            .fold(0.0_f64, f64::max);
+
+        let high_diff_threshold = max_diff * 0.8;
+        let high_diff_components: Vec<_> = self
+            .component_residuals
+            .iter()
+            .filter(|c| c.diff_value >= high_diff_threshold)
+            .collect();
+
+        let hypothesis = high_diff_components
+            .iter()
+            .map(|c| format!("{}:{}", c.node_id, c.attribute))
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let evidence: Vec<String> = high_diff_components
+            .iter()
+            .map(|c| format!("diff={:.3} on {}.{}", c.diff_value, c.node_id, c.attribute))
+            .collect();
+
+        let confidence = if max_diff >= 1.0 {
+            0.95
+        } else {
+            max_diff * 0.9
+        };
+
+        self.root_cause_analysis = RootCauseAnalysis {
+            hypothesis: if hypothesis.is_empty() {
+                "unknown".to_string()
+            } else {
+                hypothesis
+            },
+            confidence,
+            evidence,
+            contradicts_beliefs: Vec::new(),
+            propagation_depth: high_diff_components.len() as u32,
+        };
     }
 }
 
@@ -790,19 +863,39 @@ mod tests {
     #[test]
     fn test_severity_level_from_degree() {
         assert_eq!(
-            SeverityLevel::from_degree(0.0, 0.3, 0.7),
+            SeverityLevel::from_degree(0.0, 0.3, 0.7, 0.05),
             SeverityLevel::None
         );
         assert_eq!(
-            SeverityLevel::from_degree(0.2, 0.3, 0.7),
+            SeverityLevel::from_degree(0.2, 0.3, 0.7, 0.05),
             SeverityLevel::Warning
         );
         assert_eq!(
-            SeverityLevel::from_degree(0.5, 0.3, 0.7),
+            SeverityLevel::from_degree(0.5, 0.3, 0.7, 0.05),
             SeverityLevel::Error
         );
         assert_eq!(
-            SeverityLevel::from_degree(0.9, 0.3, 0.7),
+            SeverityLevel::from_degree(0.9, 0.3, 0.7, 0.05),
+            SeverityLevel::Critical
+        );
+    }
+
+    #[test]
+    fn test_severity_level_tolerance_margin() {
+        assert_eq!(
+            SeverityLevel::from_degree(0.32, 0.3, 0.7, 0.05),
+            SeverityLevel::Warning
+        );
+        assert_eq!(
+            SeverityLevel::from_degree(0.72, 0.3, 0.7, 0.05),
+            SeverityLevel::Error
+        );
+        assert_eq!(
+            SeverityLevel::from_degree(0.32, 0.3, 0.7, 0.0),
+            SeverityLevel::Error
+        );
+        assert_eq!(
+            SeverityLevel::from_degree(0.72, 0.3, 0.7, 0.0),
             SeverityLevel::Critical
         );
     }
@@ -815,5 +908,149 @@ mod tests {
         assert_eq!(residual.prediction_id, prediction_id);
         assert_eq!(residual.match_level, MatchLevel::Exact);
         assert_eq!(residual.overall_degree, 0.0);
+    }
+
+    #[test]
+    fn test_compute_overall_direct_weighted_sum() {
+        let mut dims = ResidualDimensions::default();
+        dims.numerical = NumericalDimension::compute(100.0, 110.0);
+        dims.semantic = SemanticDimension::exact_match("ok");
+        let weights = DimensionWeights::default();
+
+        let overall = dims.compute_overall(&weights);
+        let expected = dims.numerical.value.abs() * weights.numerical
+            + dims.semantic.value * weights.semantic;
+        assert!((overall - expected).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_compute_overall_uncomputed_contributes_zero() {
+        let mut dims = ResidualDimensions::default();
+        dims.numerical = NumericalDimension::compute(100.0, 110.0);
+        let weights = DimensionWeights::default();
+
+        let overall = dims.compute_overall(&weights);
+        let expected = dims.numerical.value.abs() * weights.numerical;
+        assert!((overall - expected).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_temporal_dimension_with_expected_duration() {
+        let now = Utc::now();
+        let expected = now - chrono::Duration::milliseconds(500);
+        let dim = TemporalDimension::compute(expected, now, 1000.0);
+        assert!(dim.computed);
+        assert!((dim.value - 0.5).abs() < 0.001);
+        assert!((dim.delay_ratio - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_temporal_timeout_with_duration() {
+        let dim = TemporalDimension::timeout(60_000.0);
+        assert!(dim.computed);
+        assert!((dim.value - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_structural_dimension_hld_formula() {
+        let expected_fields = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let actual_fields = vec!["a".to_string(), "d".to_string()];
+        let nested: Vec<(String, f64)> = vec![("x".to_string(), 0.3)];
+
+        let dim = StructuralDimension::compute(&expected_fields, &actual_fields, &nested);
+        assert!(dim.computed);
+
+        let missing_extra_ratio = 3.0_f64 / 3.0;
+        let nested_sum = 0.3 / 3.0;
+        let expected_value = missing_extra_ratio + nested_sum;
+        assert!((dim.value - expected_value.min(1.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_severity_auto_promotion_critical() {
+        let threshold = SeverityThreshold::default();
+        let mut dims = ResidualDimensions::default();
+        dims.numerical = NumericalDimension::compute(1.0, 100.0);
+
+        let assessment = SeverityAssessment::assess(0.2, &threshold, &dims);
+        assert_eq!(assessment.level, SeverityLevel::Critical);
+    }
+
+    #[test]
+    fn test_severity_auto_promotion_structural_error() {
+        let threshold = SeverityThreshold::default();
+        let mut dims = ResidualDimensions::default();
+        dims.structural = StructuralDimension {
+            computed: true,
+            value: 0.6,
+            expected_fields: vec!["a".to_string(), "b".to_string()],
+            actual_fields: vec!["a".to_string()],
+            missing_fields: vec!["b".to_string()],
+            extra_fields: vec![],
+            nested_diff: vec![],
+        };
+
+        let assessment = SeverityAssessment::assess(0.1, &threshold, &dims);
+        assert_eq!(assessment.level, SeverityLevel::Error);
+    }
+
+    #[test]
+    fn test_severity_auto_promotion_semantic_contradiction() {
+        let threshold = SeverityThreshold::default();
+        let mut dims = ResidualDimensions::default();
+        dims.semantic = SemanticDimension {
+            computed: true,
+            value: 1.0,
+            category_match: false,
+            label_expected: "success".to_string(),
+            label_actual: "failed".to_string(),
+            semantic_distance: 10.0,
+        };
+
+        let assessment = SeverityAssessment::assess(0.1, &threshold, &dims);
+        assert_eq!(assessment.level, SeverityLevel::Critical);
+    }
+
+    #[test]
+    fn test_populate_root_cause() {
+        let prediction_id = Uuid::new_v4();
+        let now = Utc::now();
+        let mut residual = Residual::new(prediction_id, now);
+
+        residual.component_residuals.push(ComponentResidual {
+            change_id: Uuid::new_v4(),
+            node_id: "node-1".to_string(),
+            attribute: "status".to_string(),
+            match_level: MatchLevel::Mismatch,
+            diff_value: 0.9,
+            diff_details: serde_json::json!({}),
+        });
+        residual.component_residuals.push(ComponentResidual {
+            change_id: Uuid::new_v4(),
+            node_id: "node-2".to_string(),
+            attribute: "count".to_string(),
+            match_level: MatchLevel::Partial,
+            diff_value: 0.3,
+            diff_details: serde_json::json!({}),
+        });
+
+        residual.populate_root_cause();
+
+        assert!(!residual.root_cause_analysis.hypothesis.is_empty());
+        assert!(residual.root_cause_analysis.confidence > 0.0);
+        assert!(!residual.root_cause_analysis.evidence.is_empty());
+        assert_eq!(residual.root_cause_analysis.propagation_depth, 1);
+    }
+
+    #[test]
+    fn test_populate_root_cause_empty() {
+        let prediction_id = Uuid::new_v4();
+        let now = Utc::now();
+        let mut residual = Residual::new(prediction_id, now);
+
+        residual.populate_root_cause();
+
+        assert!(residual.root_cause_analysis.hypothesis.is_empty());
+        assert_eq!(residual.root_cause_analysis.confidence, 0.0);
     }
 }

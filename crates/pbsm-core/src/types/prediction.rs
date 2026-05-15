@@ -271,6 +271,7 @@ pub struct ValidityWindow {
     pub deadline: Option<DateTime<Utc>>,
     /// 最大重试次数，EventBased 类型时允许的重试上限
     pub max_retries: u32,
+    pub created_at_step: Option<u64>,
 }
 
 impl ValidityWindow {
@@ -288,6 +289,7 @@ impl ValidityWindow {
             duration_ms,
             deadline: Some(deadline),
             max_retries: 0,
+            created_at_step: None,
         }
     }
 
@@ -304,6 +306,7 @@ impl ValidityWindow {
             duration_ms: steps,
             deadline: None,
             max_retries: 0,
+            created_at_step: None,
         }
     }
 
@@ -316,6 +319,22 @@ impl ValidityWindow {
         match self.deadline {
             Some(deadline) => Utc::now() > deadline,
             None => false,
+        }
+    }
+
+    pub fn is_expired_at(&self, current_step: Option<u64>) -> bool {
+        match self.validity_type {
+            ValidityType::Time => match self.deadline {
+                Some(deadline) => Utc::now() > deadline,
+                None => false,
+            },
+            ValidityType::Steps => match (self.created_at_step, current_step) {
+                (Some(created), Some(current)) => {
+                    current.saturating_sub(created) > self.duration_ms as u64
+                }
+                _ => false,
+            },
+            ValidityType::EventBased => false,
         }
     }
 
@@ -333,7 +352,13 @@ impl ValidityWindow {
 
 impl Default for ValidityWindow {
     fn default() -> Self {
-        Self::new_steps_window(10)
+        Self {
+            validity_type: ValidityType::Steps,
+            duration_ms: 10,
+            deadline: None,
+            max_retries: 0,
+            created_at_step: None,
+        }
     }
 }
 
@@ -376,7 +401,7 @@ impl StatusHistoryEntry {
 ///
 /// 根据 HLD-M2-PredictionEngine.md 第 2.1 节，预测生成时会记录相关信念节点的快照，
 /// 用于验证时对比上下文是否发生显著变化
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextSnapshot {
     /// 信念状态哈希值，用于快速检测上下文是否发生实质性变化
     pub belief_state_hash: String,
@@ -384,6 +409,18 @@ pub struct ContextSnapshot {
     pub relevant_nodes: Vec<String>,
     /// 意图层级，预测所属的意图栈层级（0 表示顶层意图）
     pub intention_level: u32,
+    pub completeness_score: f64,
+}
+
+impl Default for ContextSnapshot {
+    fn default() -> Self {
+        Self {
+            belief_state_hash: String::new(),
+            relevant_nodes: Vec::new(),
+            intention_level: 0,
+            completeness_score: 1.0,
+        }
+    }
 }
 
 /// 预测元数据结构体，包含预测的管理信息
@@ -401,6 +438,10 @@ pub struct PredictionMetadata {
     pub confidence: f64,
     /// 标签列表，用于分类和检索
     pub tags: Vec<String>,
+}
+
+pub fn validate_confidence(confidence: f64) -> bool {
+    (0.0..=1.0).contains(&confidence)
 }
 
 impl Default for PredictionMetadata {
@@ -462,6 +503,12 @@ pub struct Prediction {
 
 impl Default for Prediction {
     fn default() -> Self {
+        let initial_entry = StatusHistoryEntry {
+            status: PredictionState::Pending,
+            timestamp: Utc::now(),
+            reason: "Prediction created".to_string(),
+            triggered_by: Some("M2".to_string()),
+        };
         Self {
             prediction_id: Uuid::new_v4(),
             version: 1,
@@ -470,7 +517,7 @@ impl Default for Prediction {
             expected_observation: ExpectedObservation::default(),
             validity_window: ValidityWindow::default(),
             status: PredictionState::Pending,
-            status_history: Vec::new(),
+            status_history: vec![initial_entry],
             residuals: None,
             context_snapshot: ContextSnapshot::default(),
             metadata: PredictionMetadata::default(),
@@ -485,6 +532,25 @@ impl Prediction {
     /// * 初始化为默认状态的 Prediction 实例
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.expected_changes.is_empty() {
+            return Err("expected_changes must not be empty".to_string());
+        }
+        if !validate_confidence(self.metadata.confidence) {
+            return Err(format!(
+                "confidence must be in [0.0, 1.0], got {}",
+                self.metadata.confidence
+            ));
+        }
+        if self.validity_window.duration_ms <= 0 {
+            return Err(format!(
+                "validity_window duration_ms must be > 0, got {}",
+                self.validity_window.duration_ms
+            ));
+        }
+        Ok(())
     }
 
     /// 执行状态转换
@@ -507,6 +573,7 @@ impl Prediction {
                     "Cannot transition from {:?} to {:?}",
                     self.status, new_state
                 ),
+                code: "PEV-E201".to_string(),
             });
         }
 
@@ -657,6 +724,7 @@ mod tests {
             duration_ms: 0,
             deadline: Some(Utc::now() - chrono::Duration::seconds(1)),
             max_retries: 0,
+            created_at_step: None,
         };
         assert!(expired_window.is_expired());
     }
@@ -665,6 +733,10 @@ mod tests {
     fn test_prediction_creation() {
         let mut prediction = Prediction::new();
         assert_eq!(prediction.status, PredictionState::Pending);
+        assert_eq!(prediction.status_history.len(), 1);
+        assert_eq!(prediction.status_history[0].status, PredictionState::Pending);
+        assert_eq!(prediction.status_history[0].reason, "Prediction created");
+        assert_eq!(prediction.status_history[0].triggered_by, Some("M2".to_string()));
 
         prediction
             .transition_to(PredictionState::Verified, "Test verified")

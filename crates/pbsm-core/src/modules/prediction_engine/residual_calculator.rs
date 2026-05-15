@@ -96,6 +96,8 @@ impl ResidualCalculator {
         prediction_id: Uuid,
         expected_changes: &[ExpectedChange],
         observation: &Observation,
+        expected_duration_ms: f64,
+        created_at: chrono::DateTime<chrono::Utc>,
     ) -> Residual {
         let mut residual = Residual::new(prediction_id, observation.timestamp);
         let mut component_residuals = Vec::new();
@@ -110,8 +112,9 @@ impl ResidualCalculator {
             self.compute_value_residuals(expected_changes, &observation.data);
 
         let temporal = TemporalDimension::compute(
-            observation.timestamp - chrono::Duration::seconds(1),
+            created_at,
             observation.timestamp,
+            expected_duration_ms,
         );
 
         residual.dimensions = ResidualDimensions {
@@ -160,7 +163,7 @@ impl ResidualCalculator {
         change: &ExpectedChange,
         actual_value: &serde_json::Value,
     ) -> ComponentResidual {
-        let diff_value = self.compute_json_diff(&change.expected_value, actual_value);
+        let diff_value = self.compute_json_diff(&change.expected_value, actual_value, change.change_type);
         let match_level = self.determine_match_level_single(diff_value);
 
         ComponentResidual {
@@ -192,48 +195,46 @@ impl ResidualCalculator {
     /// - 字符串类型：计算语义距离
     /// - 布尔类型：相等为0，否则为1
     /// - Null值：根据变更类型判定
-    fn compute_json_diff(&self, expected: &serde_json::Value, actual: &serde_json::Value) -> f64 {
-        match (expected, actual) {
-            (serde_json::Value::Number(e), serde_json::Value::Number(a)) => {
-                let e_f = e.as_f64().unwrap_or(0.0);
-                let a_f = a.as_f64().unwrap_or(0.0);
-                if e_f == 0.0 {
-                    (a_f - e_f).abs().min(1.0)
-                } else {
-                    ((a_f - e_f) / e_f).abs().min(1.0)
+    fn compute_json_diff(&self, expected: &serde_json::Value, actual: &serde_json::Value, change_type: ChangeType) -> f64 {
+        match change_type {
+            ChangeType::Preserve => {
+                if expected == actual { 0.0 } else { 1.0 }
+            }
+            ChangeType::Add => {
+                if !actual.is_null() { 0.0 } else { 1.0 }
+            }
+            ChangeType::Remove => {
+                if actual.is_null() { 0.0 } else { 1.0 }
+            }
+            ChangeType::Modify => {
+                match (expected, actual) {
+                    (serde_json::Value::Number(e), serde_json::Value::Number(a)) => {
+                        let e_f = e.as_f64().unwrap_or(0.0);
+                        let a_f = a.as_f64().unwrap_or(0.0);
+                        if e_f == 0.0 {
+                            (a_f - e_f).abs().min(1.0)
+                        } else {
+                            ((a_f - e_f) / e_f).abs().min(1.0)
+                        }
+                    }
+                    (serde_json::Value::String(e), serde_json::Value::String(a)) => {
+                        if e == a {
+                            0.0
+                        } else {
+                            self.compute_semantic_distance(e, a).min(1.0)
+                        }
+                    }
+                    (serde_json::Value::Bool(e), serde_json::Value::Bool(a)) => {
+                        if e == a { 0.0 } else { 1.0 }
+                    }
+                    (serde_json::Value::Null, serde_json::Value::Null) => 0.0,
+                    (serde_json::Value::Null, _) => 1.0,
+                    (_, serde_json::Value::Null) => 1.0,
+                    _ => {
+                        if expected == actual { 0.0 } else { 1.0 }
+                    }
                 }
             }
-            (serde_json::Value::String(e), serde_json::Value::String(a)) => {
-                if e == a {
-                    0.0
-                } else {
-                    self.compute_semantic_distance(e, a).min(1.0)
-                }
-            }
-            (serde_json::Value::Bool(e), serde_json::Value::Bool(a)) => {
-                if e == a {
-                    0.0
-                } else {
-                    1.0
-                }
-            }
-            (serde_json::Value::Null, serde_json::Value::Null) => 0.0,
-            (serde_json::Value::Null, _) => 1.0,
-            (_, serde_json::Value::Null) => match self.determine_change_type(expected) {
-                ChangeType::Add => 0.0,
-                ChangeType::Remove => 1.0,
-                _ => 1.0,
-            },
-            _ => {
-                if expected == actual {
-                    0.0
-                } else {
-                    1.0
-                }
-            }
-        }
-    }
-
     /// 根据值的内容判断变更类型
     ///
     /// # 参数
@@ -241,10 +242,9 @@ impl ResidualCalculator {
     ///
     /// # 返回
     /// * ChangeType 枚举值
-    fn determine_change_type(&self, value: &serde_json::Value) -> ChangeType {
-        match value {
-            serde_json::Value::Null => ChangeType::Remove,
-            _ => ChangeType::Modify,
+            ChangeType::Unknown => {
+                if expected == actual { 0.0 } else { 1.0 }
+            }
         }
     }
 
@@ -415,8 +415,9 @@ impl ResidualCalculator {
     pub fn assess_severity(
         overall_degree: f64,
         threshold: &SeverityThreshold,
+        dimensions: &ResidualDimensions,
     ) -> SeverityAssessment {
-        SeverityAssessment::assess(overall_degree, threshold)
+        SeverityAssessment::assess(overall_degree, threshold, dimensions)
     }
 }
 
@@ -482,7 +483,7 @@ mod tests {
             },
         ];
 
-        let residual = calc.compute_residual(prediction_id, &expected, &observation);
+        let residual = calc.compute_residual(prediction_id, &expected, &observation, 1000.0, Utc::now() - chrono::Duration::milliseconds(500));
         assert!(residual.dimensions.numerical.computed);
         assert_eq!(residual.dimensions.numerical.value, 0.0);
         assert!(residual.overall_degree < 0.4);
@@ -522,7 +523,7 @@ mod tests {
             },
         ];
 
-        let residual = calc.compute_residual(prediction_id, &expected, &observation);
+        let residual = calc.compute_residual(prediction_id, &expected, &observation, 1000.0, Utc::now() - chrono::Duration::milliseconds(500));
         assert!(residual.overall_degree > 0.0);
         assert!(residual.overall_degree <= 0.6);
     }
@@ -549,7 +550,7 @@ mod tests {
             derivation_path: vec![],
         }];
 
-        let residual = calc.compute_residual(prediction_id, &expected, &observation);
+        let residual = calc.compute_residual(prediction_id, &expected, &observation, 1000.0, Utc::now() - chrono::Duration::milliseconds(500));
         assert!(residual.overall_degree > 0.0);
     }
 
@@ -569,8 +570,9 @@ mod tests {
     #[test]
     fn test_severity_assessment() {
         let threshold = SeverityThreshold::default();
+        let dims = ResidualDimensions::default();
         assert_eq!(
-            ResidualCalculator::assess_severity(0.0, &threshold).level,
+            ResidualCalculator::assess_severity(0.0, &threshold, &dims).level,
             SeverityLevel::None
         );
     }

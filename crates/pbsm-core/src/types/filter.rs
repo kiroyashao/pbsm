@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::prediction::PredictionState;
+use super::residual::SeverityLevel;
 
 /// 预测过滤器结构体，用于条件筛选预测集合
 ///
@@ -35,7 +36,7 @@ pub struct PredictionFilter {
     /// 时间范围过滤，None 表示不限制
     pub time_range: Option<TimeRange>,
     /// 最小严重程度过滤（预留字段）
-    pub min_severity: Option<String>,
+    pub min_severity: Option<SeverityLevel>,
     /// 返回结果数量上限
     pub limit: Option<usize>,
     /// 返回结果偏移量，用于分页
@@ -91,7 +92,27 @@ impl PredictionFilter {
             }
         }
 
+        if let Some(min_severity) = self.min_severity {
+            let prediction_severity = prediction
+                .residuals
+                .as_ref()
+                .map(|r| r.severity_assessment.level)
+                .unwrap_or(SeverityLevel::None);
+            if severity_rank(&prediction_severity) < severity_rank(&min_severity) {
+                return false;
+            }
+        }
+
         true
+    }
+}
+
+fn severity_rank(level: &SeverityLevel) -> u8 {
+    match level {
+        SeverityLevel::None => 0,
+        SeverityLevel::Warning => 1,
+        SeverityLevel::Error => 2,
+        SeverityLevel::Critical => 3,
     }
 }
 
@@ -221,6 +242,8 @@ pub struct Annotation {
 pub struct ResidualHistory {
     /// 关联的预测ID
     pub prediction_id: String,
+    /// 残差列表
+    pub residuals: Vec<super::residual::Residual>,
     /// 残差计算时间点列表
     pub computed_at: Vec<DateTime<Utc>>,
     /// 残差趋势分析
@@ -233,6 +256,7 @@ impl Default for ResidualHistory {
     fn default() -> Self {
         Self {
             prediction_id: String::new(),
+            residuals: Vec::new(),
             computed_at: Vec::new(),
             trend: ResidualTrend {
                 trend: TrendDirection::Stable,

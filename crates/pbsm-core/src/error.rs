@@ -19,35 +19,67 @@ use thiserror::Error;
 
 #[derive(Error, Debug, Clone)]
 pub enum PredictionError {
-    #[error("Prediction not found: {0}")]
-    NotFound(String),
+    #[error("Prediction not found: {message}")]
+    NotFound { message: String, code: String },
 
-    #[error("Context incomplete: {0}")]
-    ContextIncomplete(String),
+    #[error("Context incomplete: {message}")]
+    ContextIncomplete { message: String, code: String },
 
-    #[error("Invalid action: {0}")]
-    InvalidAction(String),
+    #[error("Invalid action: {message}")]
+    InvalidAction { message: String, code: String },
 
-    #[error("Target not found: {0}")]
-    TargetNotFound(String),
+    #[error("Target not found: {message}")]
+    TargetNotFound { message: String, code: String },
 
     #[error("Prediction already verified")]
-    AlreadyVerified,
+    AlreadyVerified { code: String },
 
     #[error("Prediction expired")]
-    Expired,
+    Expired { code: String },
 
     #[error("State transition error: {reason}")]
-    StateTransition { reason: String },
+    StateTransition { reason: String, code: String },
 
     #[error("Internal error: {context}")]
-    Internal { context: String },
+    Internal { context: String, code: String },
 
-    #[error("Invalid observation: {0}")]
-    InvalidObservation(String),
+    #[error("Invalid observation: {message}")]
+    InvalidObservation { message: String, code: String },
 
-    #[error("Cancellation error: {0}")]
-    Cancellation(String),
+    #[error("Cancellation error: {message}")]
+    Cancellation { message: String, code: String },
+}
+
+impl PredictionError {
+    pub fn error_code(&self) -> &str {
+        match self {
+            PredictionError::NotFound { code, .. } => code,
+            PredictionError::ContextIncomplete { code, .. } => code,
+            PredictionError::InvalidAction { code, .. } => code,
+            PredictionError::TargetNotFound { code, .. } => code,
+            PredictionError::AlreadyVerified { code } => code,
+            PredictionError::Expired { code } => code,
+            PredictionError::StateTransition { code, .. } => code,
+            PredictionError::Internal { code, .. } => code,
+            PredictionError::InvalidObservation { code, .. } => code,
+            PredictionError::Cancellation { code, .. } => code,
+        }
+    }
+
+    pub fn http_status(&self) -> u16 {
+        match self {
+            PredictionError::NotFound { .. } => 404,
+            PredictionError::ContextIncomplete { .. } => 400,
+            PredictionError::InvalidAction { .. } => 400,
+            PredictionError::TargetNotFound { .. } => 404,
+            PredictionError::AlreadyVerified { .. } => 409,
+            PredictionError::Expired { .. } => 410,
+            PredictionError::StateTransition { .. } => 409,
+            PredictionError::Internal { .. } => 500,
+            PredictionError::InvalidObservation { .. } => 400,
+            PredictionError::Cancellation { .. } => 409,
+        }
+    }
 }
 
 impl PartialEq for PredictionError {
@@ -55,27 +87,27 @@ impl PartialEq for PredictionError {
         let result = matches!(
             (self, other),
             (
-                PredictionError::NotFound(_)
-                    | PredictionError::AlreadyVerified
-                    | PredictionError::Expired,
-                PredictionError::NotFound(_)
-                    | PredictionError::AlreadyVerified
-                    | PredictionError::Expired
+                PredictionError::NotFound { .. }
+                    | PredictionError::AlreadyVerified { .. }
+                    | PredictionError::Expired { .. },
+                PredictionError::NotFound { .. }
+                    | PredictionError::AlreadyVerified { .. }
+                    | PredictionError::Expired { .. }
             ) | (
-                PredictionError::ContextIncomplete(_)
-                    | PredictionError::InvalidAction(_)
-                    | PredictionError::TargetNotFound(_)
+                PredictionError::ContextIncomplete { .. }
+                    | PredictionError::InvalidAction { .. }
+                    | PredictionError::TargetNotFound { .. }
                     | PredictionError::StateTransition { .. }
                     | PredictionError::Internal { .. }
-                    | PredictionError::InvalidObservation(_)
-                    | PredictionError::Cancellation(_),
-                PredictionError::ContextIncomplete(_)
-                    | PredictionError::InvalidAction(_)
-                    | PredictionError::TargetNotFound(_)
+                    | PredictionError::InvalidObservation { .. }
+                    | PredictionError::Cancellation { .. },
+                PredictionError::ContextIncomplete { .. }
+                    | PredictionError::InvalidAction { .. }
+                    | PredictionError::TargetNotFound { .. }
                     | PredictionError::StateTransition { .. }
                     | PredictionError::Internal { .. }
-                    | PredictionError::InvalidObservation(_)
-                    | PredictionError::Cancellation(_),
+                    | PredictionError::InvalidObservation { .. }
+                    | PredictionError::Cancellation { .. },
             )
         );
         result

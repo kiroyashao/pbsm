@@ -31,6 +31,14 @@ impl SystemEvent {
                 PredictionEvent::WarningResidualDetected(_) => "prediction.warningResidual",
                 PredictionEvent::ErrorResidualDetected(_) => "prediction.errorResidual",
                 PredictionEvent::CriticalResidualDetected(_) => "prediction.criticalResidual",
+                PredictionEvent::PredictionStatusChanged(_) => "prediction.statusChanged",
+                PredictionEvent::PredictionExpired(_) => "prediction.expired",
+                PredictionEvent::PredictionCancelled(_) => "prediction.cancelled",
+                PredictionEvent::ResidualTrendAlert(_) => "prediction.residualTrendAlert",
+                PredictionEvent::PredictionEngineInitialized(_) => "prediction.engineInitialized",
+                PredictionEvent::PredictionEngineError(_) => "prediction.engineError",
+                PredictionEvent::ContextIntegrityWarning(_) => "prediction.contextIntegrityWarning",
+                PredictionEvent::VerificationTimeout(_) => "prediction.verificationTimeout",
             },
             SystemEvent::Metacognitive(e) => e.event_type_name(),
             SystemEvent::Memory(e) => &e.event_type,
@@ -146,10 +154,10 @@ impl PredictionEventAdapter {
 impl crate::modules::common::EventPublisher for PredictionEventAdapter {
     fn publish_event(
         &self,
-        event: PredictionEvent,
+        event: crate::modules::common::PBSMEvent,
     ) -> Result<(), crate::modules::common::EventPublishError> {
         self.bus
-            .publish(SystemEvent::Prediction(event))
+            .publish(SystemEvent::Prediction(event.payload))
             .map_err(crate::modules::common::EventPublishError::PublishFailed)?;
         Ok(())
     }
@@ -299,7 +307,8 @@ mod tests {
             expected_change_count: 2,
         });
 
-        adapter.publish_event(event).unwrap();
+        let pbsm_event = crate::modules::common::PBSMEvent::new(event);
+        adapter.publish_event(pbsm_event).unwrap();
 
         let received = rx.try_recv().unwrap();
         match received {

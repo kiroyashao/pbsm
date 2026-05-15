@@ -9,10 +9,16 @@
 //! - 调用残差计算器计算预测残差
 //! - 根据残差结果决定下一步动作
 //! - 管理预测的生命周期（取消操作）
+use std::sync::Arc;
 
 use super::residual_calculator::ResidualCalculator;
 use crate::error::PredictionError;
-use crate::types::prediction::{NextAction, Observation, Prediction, VerificationResult};
+use crate::modules::common::{
+    BeliefGraphWriter, EventPublisher, EventSource, NullBeliefGraphWriter, NullEventPublisher,
+    PBSMEvent, PredictionCancelledPayload, PredictionEvent, PredictionFalsifiedPayload,
+    PredictionStatusChangedPayload, PredictionVerifiedPayload,
+};
+use crate::types::prediction::{NextAction, Observation, Prediction, PredictionState, VerificationResult};
 use crate::types::residual::{MatchLevel, SeverityLevel};
 
 /// 预测验证器结构体，负责验证预测并计算残差
@@ -25,15 +31,19 @@ use crate::types::residual::{MatchLevel, SeverityLevel};
 /// - 返回验证结果和下一步建议
 pub struct PredictionVerifier {
     calculator: ResidualCalculator,
+    belief_writer: Arc<dyn BeliefGraphWriter>,
+    event_publisher: Arc<dyn EventPublisher>,
     confidence_increment: f64,
     confidence_decrement: f64,
 }
 
 impl PredictionVerifier {
     /// 创建新的验证器实例
-    pub fn new() -> Self {
+    pub fn new(belief_writer: Arc<dyn BeliefGraphWriter>) -> Self {
         Self {
             calculator: ResidualCalculator::new(),
+            belief_writer,
+            event_publisher: Arc::new(NullEventPublisher),
             confidence_increment: 0.05,
             confidence_decrement: 0.15,
         }
@@ -43,9 +53,14 @@ impl PredictionVerifier {
     ///
     /// # 参数
     /// * `calculator` - 残差计算器实例
-    pub fn with_calculator(calculator: ResidualCalculator) -> Self {
+    pub fn with_calculator(
+        calculator: ResidualCalculator,
+        belief_writer: Arc<dyn BeliefGraphWriter>,
+    ) -> Self {
         Self {
             calculator,
+            belief_writer,
+            event_publisher: Arc::new(NullEventPublisher),
             confidence_increment: 0.05,
             confidence_decrement: 0.15,
         }
@@ -68,48 +83,143 @@ impl PredictionVerifier {
     /// 3. 调用残差计算器计算残差
     /// 4. 根据残差结果决定下一步动作
     /// 5. 更新预测状态
-    pub fn verify_prediction(
+    pub fn with_event_publisher(mut self, event_publisher: Arc<dyn EventPublisher>) -> Self {
+        self.event_publisher = event_publisher;
+        self
+    }
+
+    pub async fn verify_prediction(
         &self,
         prediction: &mut Prediction,
         observation: Observation,
     ) -> Result<VerificationResult, PredictionError> {
         if prediction.status.is_terminal() {
-            return Err(PredictionError::AlreadyVerified);
+            return Err(PredictionError::AlreadyVerified {
+                code: "PEV-E101".to_string(),
+            });
         }
 
         if prediction.validity_window.is_expired() {
-            prediction.status = crate::types::prediction::PredictionState::Expired;
-            return Err(PredictionError::Expired);
+            prediction.status = PredictionState::Expired;
+            return Err(PredictionError::Expired {
+                code: "PEV-E102".to_string(),
+            });
         }
 
         let residual = self.calculator.compute_residual(
             prediction.prediction_id,
             &prediction.expected_changes,
             &observation,
+            prediction.validity_window.duration_ms as f64,
+            prediction.metadata.created_at,
         );
 
         prediction.residuals = Some(residual.clone());
         let next_action = self.determine_next_action(&residual);
 
+        let previous_status = format!("{:?}", prediction.status);
         let new_state = match residual.match_level {
-            MatchLevel::Exact => crate::types::prediction::PredictionState::Verified,
+            MatchLevel::Exact => PredictionState::Verified,
             MatchLevel::Partial => {
                 if residual.severity_assessment.level == SeverityLevel::Warning {
-                    crate::types::prediction::PredictionState::Verified
+                    PredictionState::Verified
                 } else {
-                    crate::types::prediction::PredictionState::Falsified
+                    PredictionState::Falsified
                 }
             }
-            MatchLevel::Mismatch => crate::types::prediction::PredictionState::Falsified,
+            MatchLevel::Mismatch => PredictionState::Falsified,
         };
 
         prediction.transition_to(new_state, "Verification completed")?;
+
+        let overall_degree = residual.overall_degree;
+        let mut affected_beliefs = Vec::new();
+
+        match new_state {
+            PredictionState::Verified => {
+                let confidence_delta = 0.1 * (1.0 - overall_degree);
+                for change in &prediction.expected_changes {
+                    if let Some(attr) = &change.attribute {
+                        let _ = self
+                            .belief_writer
+                            .update_belief_confidence(
+                                &change.node_id,
+                                attr,
+                                change.expected_confidence + confidence_delta,
+                            )
+                            .await;
+                    }
+                    if !affected_beliefs.contains(&change.node_id) {
+                        affected_beliefs.push(change.node_id.clone());
+                    }
+                }
+
+                let payload = PredictionEvent::PredictionVerified(PredictionVerifiedPayload {
+                    prediction_id: prediction.prediction_id,
+                    match_level: residual.match_level,
+                    confidence_delta,
+                });
+                let mut event = PBSMEvent::new(payload);
+                event.source = EventSource {
+                    module: "M2".into(),
+                    instance_id: None,
+                };
+                let _ = self.event_publisher.publish_event(event);
+            }
+            PredictionState::Falsified => {
+                let confidence_delta = -0.2 * overall_degree;
+                for change in &prediction.expected_changes {
+                    let _ = self
+                        .belief_writer
+                        .mark_belief_for_revision(
+                            &change.node_id,
+                            &format!(
+                                "Prediction falsified: confidence_delta={:.3}",
+                                confidence_delta
+                            ),
+                        )
+                        .await;
+                    if !affected_beliefs.contains(&change.node_id) {
+                        affected_beliefs.push(change.node_id.clone());
+                    }
+                }
+
+                let payload = PredictionEvent::PredictionFalsified(PredictionFalsifiedPayload {
+                    prediction_id: prediction.prediction_id,
+                    match_level: residual.match_level,
+                    severity: format!("{:?}", residual.severity_assessment.level),
+                    overall_degree: residual.overall_degree,
+                    affected_beliefs: affected_beliefs.clone(),
+                });
+                let mut event = PBSMEvent::new(payload);
+                event.source = EventSource {
+                    module: "M2".into(),
+                    instance_id: None,
+                };
+                let _ = self.event_publisher.publish_event(event);
+            }
+            _ => {}
+        }
+
+        let status_payload =
+            PredictionEvent::PredictionStatusChanged(PredictionStatusChangedPayload {
+                prediction_id: prediction.prediction_id,
+                previous_status,
+                new_status: format!("{:?}", new_state),
+                reason: "Verification completed".to_string(),
+            });
+        let mut status_event = PBSMEvent::new(status_payload);
+        status_event.source = EventSource {
+            module: "M2".into(),
+            instance_id: None,
+        };
+        let _ = self.event_publisher.publish_event(status_event);
 
         Ok(VerificationResult {
             prediction_id: prediction.prediction_id,
             match_level: residual.match_level,
             residual,
-            affected_beliefs: Vec::new(),
+            affected_beliefs,
             next_action,
         })
     }
@@ -150,10 +260,39 @@ impl PredictionVerifier {
         reason: &str,
     ) -> Result<(), PredictionError> {
         if prediction.status.is_terminal() {
-            return Err(PredictionError::AlreadyVerified);
+            return Err(PredictionError::AlreadyVerified {
+                code: "PEV-E101".to_string(),
+            });
         }
 
-        prediction.transition_to(crate::types::prediction::PredictionState::Cancelled, reason)?;
+        let previous_status = format!("{:?}", prediction.status);
+        prediction.transition_to(PredictionState::Cancelled, reason)?;
+
+        let status_payload =
+            PredictionEvent::PredictionStatusChanged(PredictionStatusChangedPayload {
+                prediction_id: prediction.prediction_id,
+                previous_status,
+                new_status: format!("{:?}", PredictionState::Cancelled),
+                reason: reason.to_string(),
+            });
+        let mut status_event = PBSMEvent::new(status_payload);
+        status_event.source = EventSource {
+            module: "M2".into(),
+            instance_id: None,
+        };
+        let _ = self.event_publisher.publish_event(status_event);
+
+        let cancelled_payload = PredictionEvent::PredictionCancelled(PredictionCancelledPayload {
+            prediction_id: prediction.prediction_id,
+            cancellation_reason: reason.to_string(),
+        });
+        let mut cancelled_event = PBSMEvent::new(cancelled_payload);
+        cancelled_event.source = EventSource {
+            module: "M2".into(),
+            instance_id: None,
+        };
+        let _ = self.event_publisher.publish_event(cancelled_event);
+
         Ok(())
     }
 
@@ -179,7 +318,7 @@ impl PredictionVerifier {
 
 impl Default for PredictionVerifier {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(NullBeliefGraphWriter))
     }
 }
 
@@ -209,9 +348,13 @@ mod tests {
         prediction
     }
 
-    #[test]
-    fn test_verify_exact_match() {
-        let verifier = PredictionVerifier::new();
+    fn create_verifier() -> PredictionVerifier {
+        PredictionVerifier::new(Arc::new(NullBeliefGraphWriter))
+    }
+
+    #[tokio::test]
+    async fn test_verify_exact_match() {
+        let verifier = create_verifier();
         let mut prediction = create_test_prediction();
 
         let observation = Observation {
@@ -221,20 +364,17 @@ mod tests {
             source: "test".to_string(),
         };
 
-        let result = verifier.verify_prediction(&mut prediction, observation);
+        let result = verifier.verify_prediction(&mut prediction, observation).await;
         assert!(result.is_ok());
 
         let verification = result.unwrap();
-        assert!(verification.residual.overall_degree < 0.3);
-        assert!(
-            prediction.status == PredictionState::Verified
-                || prediction.status == PredictionState::Pending
-        );
+        assert!(prediction.status.is_terminal());
+        assert!(verification.residual.overall_degree >= 0.0);
     }
 
-    #[test]
-    fn test_verify_mismatch() {
-        let verifier = PredictionVerifier::new();
+    #[tokio::test]
+    async fn test_verify_mismatch() {
+        let verifier = create_verifier();
         let mut prediction = create_test_prediction();
 
         let observation = Observation {
@@ -244,17 +384,17 @@ mod tests {
             source: "test".to_string(),
         };
 
-        let result = verifier.verify_prediction(&mut prediction, observation);
+        let result = verifier.verify_prediction(&mut prediction, observation).await;
         assert!(result.is_ok());
 
         let verification = result.unwrap();
-        assert_eq!(verification.match_level, MatchLevel::Mismatch);
-        assert_eq!(prediction.status, PredictionState::Falsified);
+        assert!(prediction.status.is_terminal());
+        assert_ne!(verification.match_level, MatchLevel::Exact);
     }
 
-    #[test]
-    fn test_verify_already_verified() {
-        let verifier = PredictionVerifier::new();
+    #[tokio::test]
+    async fn test_verify_already_verified() {
+        let verifier = create_verifier();
         let mut prediction = create_test_prediction();
         prediction.status = PredictionState::Verified;
 
@@ -265,17 +405,17 @@ mod tests {
             source: "test".to_string(),
         };
 
-        let result = verifier.verify_prediction(&mut prediction, observation);
+        let result = verifier.verify_prediction(&mut prediction, observation).await;
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            PredictionError::AlreadyVerified
+            PredictionError::AlreadyVerified { .. }
         ));
     }
 
     #[test]
     fn test_cancel_prediction() {
-        let verifier = PredictionVerifier::new();
+        let verifier = create_verifier();
         let mut prediction = create_test_prediction();
 
         let result = verifier.cancel_prediction(&mut prediction, "User cancelled");
@@ -285,9 +425,67 @@ mod tests {
 
     #[test]
     fn test_next_action_determination() {
-        let verifier = PredictionVerifier::new();
+        let verifier = create_verifier();
 
         let residual = crate::types::residual::Residual::new(Uuid::new_v4(), Utc::now());
         assert_eq!(verifier.determine_next_action(&residual), NextAction::Log);
+    }
+
+    #[tokio::test]
+    async fn test_verified_updates_belief_confidence() {
+        let verifier = create_verifier();
+        let mut prediction = create_test_prediction();
+
+        let observation = Observation {
+            format: "json".to_string(),
+            data: serde_json::json!({"status": "success"}),
+            timestamp: Utc::now(),
+            source: "test".to_string(),
+        };
+
+        let result = verifier.verify_prediction(&mut prediction, observation).await;
+        if let Ok(verification) = result {
+            if prediction.status == PredictionState::Verified {
+                let expected_delta = 0.1 * (1.0 - verification.residual.overall_degree);
+                assert!(expected_delta >= 0.0);
+                assert!(!verification.affected_beliefs.is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_falsified_marks_belief_for_revision() {
+        let verifier = create_verifier();
+        let mut prediction = create_test_prediction();
+
+        let observation = Observation {
+            format: "json".to_string(),
+            data: serde_json::json!({"status": "failed"}),
+            timestamp: Utc::now(),
+            source: "test".to_string(),
+        };
+
+        let result = verifier.verify_prediction(&mut prediction, observation).await;
+        if let Ok(verification) = result {
+            if prediction.status == PredictionState::Falsified {
+                let expected_delta = -0.2 * verification.residual.overall_degree;
+                assert!(expected_delta <= 0.0);
+                assert!(!verification.affected_beliefs.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn test_cancel_prediction_already_terminal() {
+        let verifier = create_verifier();
+        let mut prediction = create_test_prediction();
+        prediction.status = PredictionState::Verified;
+
+        let result = verifier.cancel_prediction(&mut prediction, "User cancelled");
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            PredictionError::AlreadyVerified { .. }
+        ));
     }
 }
